@@ -4,7 +4,8 @@
 
 import { View, div } from "gpui-kit";
 import { v_flex, h_flex } from "gpui-base";
-import { exec, home, panes, readTextFile, spaces, theme } from "herdr";
+import { exec, home, panes, placement, readTextFile, spaces, theme } from "herdr";
+import { adapt } from "./adapt.js";
 import { agentPanes, createCardBuilder } from "./cards.js";
 import { describeCard } from "./format.js";
 import { REFRESH_INTERVAL_MS } from "./refresh.js";
@@ -93,14 +94,19 @@ export default class SessionStats extends View {
     // loading, however long a slow machine takes.
     const empty = this.agents === 0 ? "No agents" : "Loading…";
     const note = this.problem ?? (this.cards.length === 0 ? empty : null);
-    return v_flex()
+    // The container decides how the cards are listed: a column or a side edge stacks them, a
+    // top or bottom edge puts them side by side (src/adapt.js).
+    const vertical = adapt({ placement: placement() }).direction === "vertical";
+    const list = vertical
+      ? v_flex().overflow_y_scrollbar()
+      : h_flex().items_start().overflow_x_scrollbar();
+    return list
       .id("session-stats")
       .size_full()
       .gap(8)
       .p(8)
       .bg(t.chrome)
-      .overflow_y_scrollbar()
-      .children(this.cards.map((c) => card(c, t)))
+      .children(this.cards.map((c) => (vertical ? card(c, t) : div().flex_none().w(260).child(card(c, t)))))
       .when(note !== null, (el) => el.child(div().text_size(12).text_color(t.dim).child(note)));
   }
 }
