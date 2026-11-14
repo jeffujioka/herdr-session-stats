@@ -1,0 +1,10 @@
+{
+  "name": "herdr-session-stats",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "description": "A herdr mod that shows CWD, git info and AI harness session stats per agent pane.",
+  "scripts": {
+    "test": "bun test"
+  }
+}
