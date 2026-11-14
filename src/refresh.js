@@ -14,7 +14,21 @@ export const TAIL_BYTES = 256 * 1024;
 // omp writes one entry per line, in compact JSON.
 const COMPACTION_ENTRY = '"type":"compaction"';
 
-const encoder = new TextEncoder();
+// herdr's runtime has no TextEncoder: the byte length of a string in UTF-8 is counted from its
+// UTF-16 code units (a surrogate pair is one 4-byte character).
+function utf8Length(text) {
+  let bytes = 0;
+  for (let i = 0; i < text.length; i++) {
+    const unit = text.charCodeAt(i);
+    if (unit < 0x80) bytes += 1;
+    else if (unit < 0x800) bytes += 2;
+    else if (unit >= 0xd800 && unit <= 0xdbff) {
+      bytes += 4;
+      i++;
+    } else bytes += 3;
+  }
+  return bytes;
+}
 
 // `exec`: herdr's `exec`. `read(file)` takes `{ path, mtimeMs, size }` of a linked session
 // file and resolves to the `input` of `readStats('omp', input, now)`: `{ text, sources }`
@@ -51,7 +65,7 @@ export function createSessionReader({ exec }) {
       }
       const whole = added.stdout.slice(0, added.stdout.lastIndexOf('\n') + 1);
       seen.count += whole.split(COMPACTION_ENTRY).length - 1;
-      seen.scannedSize += encoder.encode(whole).length;
+      seen.scannedSize += utf8Length(whole);
       return seen.count;
     }
     // grep exits 1 for no match, with nothing printed; any other code (2, or none or a
