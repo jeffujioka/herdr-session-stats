@@ -2,12 +2,21 @@
 // returns the stats of src/providers/index.js that it can read. A figure it cannot read is
 // left out, which the registry turns into 'n/a'; nothing here estimates one.
 //
-// Pure: no herdr, no file or database access. `input` is the jsonl text.
+// Pure apart from two read-only sources the context figures need: omp's model catalogue and
+// omp's config. `createOmpProvider` takes them as functions, so tests hand in values; the
+// default provider reads the real files (see "Default sources" at the end). `input` is the
+// jsonl text.
 //
 // Structure: `parseSession` turns the text into one `session` value; each entry of `FIGURES`
 // is a function `(session, now) => partial stats` (`now` is epoch ms; only a figure that
 // measures from the present reads it). A later figure is one more function in the list, so
-// adding a figure never rewrites an earlier one.
+// adding a figure never rewrites an earlier one. The figures that need a source are built by
+// `contextFigure(sources)` and added to the list in `createOmpProvider`.
+
+import { Database } from 'bun:sqlite';
+import { readFileSync } from 'node:fs';
+import { homedir } from 'node:os';
+import { join } from 'node:path';
 
 // Lines that are not whole JSON (a tail window can start mid-line) are skipped.
 function parseEntries(text) {
@@ -28,7 +37,11 @@ function parseSession(text) {
   const entries = parseEntries(text);
   const messages = entries.filter((e) => e.type === 'message' && e.message);
   const assistants = messages.filter((e) => e.message.role === 'assistant').map((e) => e.message);
-  return { messages, assistants };
+  // The `session` entry is the second line of a file, so a text that holds it starts at the
+  // top of the file; a tail window does not.
+  const fromStart = entries.some((e) => e.type === 'session');
+  const compactions = entries.filter((e) => e.type === 'compaction').length;
+  return { messages, assistants, fromStart, compactions };
 }
 
 const isNumber = (value) => typeof value === 'number' && Number.isFinite(value);
@@ -102,9 +115,129 @@ function cacheExpiry({ assistants }, now) {
 
 const FIGURES = [model, duration, tokens, cost, cacheRate, cacheTurns, cacheExpiry];
 
-export const ompProvider = {
-  readStats(input, now) {
-    const session = parseSession(input);
-    return Object.assign({}, ...FIGURES.map((figure) => figure(session, now)));
-  },
-};
+// Compactions recorded in the session (docs/omp-session-format.md, D8 (a)): omp does not
+// mark automatic ones, so this counts all `compaction` entries. Counting needs the whole
+// file; a tail window can hold only some of them, so it reads n/a, never 0.
+function autocompactions({ fromStart, compactions }) {
+  return fromStart ? { autocompactions: compactions } : {};
+}
+
+// Window of the latest assistant message's model, from omp's model catalogue (D8 (b)).
+function contextWindow(modelCatalogue, { provider, model } = {}) {
+  if (typeof provider !== 'string' || typeof model !== 'string') return undefined;
+  const window = modelCatalogue(provider)?.find((entry) => entry?.id === model)?.contextWindow;
+  return isNumber(window) && window > 0 ? window : undefined;
+}
+
+// The default reserve and its 15% floor are omp's own rule: omp://compaction.md "Settings and
+// defaults" (`compaction.reserveTokens`) and omp://settings.md (`compaction.thresholdTokens`,
+// `thresholdPercent`, `modelThresholds`); the code of omp 18.20.2 agrees (reserve is
+// `max(floor(window * 0.15), reserveTokens ?? 16384)`). On a 1M window this is 850,000.
+const DEFAULT_RESERVE = 16384;
+
+// Trigger of the reserve-based default; undefined where the doc leaves the result to omp's
+// small-window fallback (a window whose 15% is under the default reserve, or a reserve that
+// swallows the window), which the mod does not copy.
+function reserveTrigger(window, configured) {
+  const floor = Math.floor(window * 0.15);
+  const explicit = isNumber(configured);
+  if (!explicit && floor < DEFAULT_RESERVE) return undefined;
+  const reserve = Math.max(floor, explicit ? configured : DEFAULT_RESERVE);
+  return reserve < window ? window - reserve : undefined;
+}
+
+// A `modelThresholds` key is `provider/model-id` or a `*`-terminated prefix of it.
+function hasModelThreshold(modelThresholds, key) {
+  if (!modelThresholds || typeof modelThresholds !== 'object') return false;
+  return Object.keys(modelThresholds).some((pattern) =>
+    pattern.endsWith('*') ? key.startsWith(pattern.slice(0, -1)) : pattern === key,
+  );
+}
+
+// Tokens at which omp autocompacts (D8 (c)), from the `compaction` block of its config;
+// undefined when it cannot be known: config unreadable, autocompaction off, or a per-model
+// entry for this model, whose scaling the mod does not evaluate. Project-level config files
+// are not read, so a setting made only there is not seen.
+function compactionTrigger(window, key, settings) {
+  if (!settings || settings.enabled === false) return undefined;
+  if (settings.modelThresholdsEnabled !== false && hasModelThreshold(settings.modelThresholds, key)) {
+    return undefined;
+  }
+  const { thresholdTokens, thresholdPercent, reserveTokens } = settings;
+  // a fixed trigger at or past the window compacts like the default
+  if (isNumber(thresholdTokens) && thresholdTokens > 0 && thresholdTokens < window) return thresholdTokens;
+  if (!(isNumber(thresholdTokens) && thresholdTokens > 0) && isNumber(thresholdPercent) && thresholdPercent > 0) {
+    return Math.floor((window * Math.min(99, Math.max(1, thresholdPercent))) / 100);
+  }
+  return reserveTrigger(window, reserveTokens);
+}
+
+// Context usage is the latest prompt size the harness logged (`contextSnapshot.promptTokens`);
+// the window, the percentage and the headroom need the model's window, and the headroom also
+// the trigger. Each is left out when its input is unknown.
+function contextFigure({ modelCatalogue, compactionSettings }) {
+  return ({ assistants }) => {
+    const figures = {};
+    const used = assistants.map((m) => m.contextSnapshot?.promptTokens).filter(isNumber).at(-1);
+    if (used !== undefined) figures.contextTokens = used;
+    const window = contextWindow(modelCatalogue, assistants.at(-1));
+    if (window === undefined) return figures;
+    figures.contextMax = window;
+    if (used === undefined) return figures;
+    figures.contextPercent = used / window;
+    const { provider, model } = assistants.at(-1);
+    const trigger = compactionTrigger(window, `${provider}/${model}`, compactionSettings());
+    if (trigger !== undefined) figures.headroomTokens = Math.max(0, trigger - used);
+    return figures;
+  };
+}
+
+// `sources` are two read-only functions: `modelCatalogue(provider)` gives the model entries
+// (`{ id, contextWindow }`) of omp's newest catalogue row of that provider, and
+// `compactionSettings()` the `compaction` block of omp's config; each gives undefined when
+// unreadable.
+export function createOmpProvider(sources) {
+  const figures = [...FIGURES, autocompactions, contextFigure(sources)];
+  return {
+    readStats(input, now) {
+      const session = parseSession(input);
+      return Object.assign({}, ...figures.map((figure) => figure(session, now)));
+    },
+  };
+}
+
+// Default sources: omp's own files, opened read-only and never written.
+
+// Newest row of the provider's rows (`<provider>:...`), by `updated_at` (D8 (b)).
+export function readModelCatalogue(dbPath, provider) {
+  const prefix = `${provider}:`;
+  let db;
+  try {
+    db = new Database(dbPath, { readonly: true });
+    const row = db
+      .query('SELECT models FROM model_cache WHERE substr(provider_id, 1, ?) = ? ORDER BY updated_at DESC LIMIT 1')
+      .get(prefix.length, prefix);
+    const models = row ? JSON.parse(row.models) : undefined;
+    return Array.isArray(models) ? models : undefined;
+  } catch {
+    return undefined;
+  } finally {
+    db?.close();
+  }
+}
+
+export function readCompactionSettings(configPath) {
+  try {
+    const compaction = Bun.YAML.parse(readFileSync(configPath, 'utf8'))?.compaction;
+    return compaction && typeof compaction === 'object' ? compaction : {};
+  } catch {
+    return undefined;
+  }
+}
+
+const OMP_AGENT_DIR = join(homedir(), '.omp', 'agent');
+
+export const ompProvider = createOmpProvider({
+  modelCatalogue: (provider) => readModelCatalogue(join(OMP_AGENT_DIR, 'models.db'), provider),
+  compactionSettings: () => readCompactionSettings(join(OMP_AGENT_DIR, 'config.yml')),
+});
