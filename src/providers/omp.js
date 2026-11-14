@@ -2,10 +2,10 @@
 // returns the stats of src/providers/index.js that it can read. A figure it cannot read is
 // left out, which the registry turns into 'n/a'; nothing here estimates one.
 //
-// Pure: no herdr, no file or database access. `input` is the jsonl text, `now` epoch ms.
+// Pure: no herdr, no file or database access. `input` is the jsonl text.
 //
 // Structure: `parseSession` turns the text into one `session` value; each entry of `FIGURES`
-// is a function `(session, now) => partial stats`. A later figure is one more function in the
+// is a function `(session) => partial stats`. A later figure is one more function in the
 // list, so adding a figure never rewrites an earlier one.
 
 // Lines that are not whole JSON (a tail window can start mid-line) are skipped.
@@ -27,7 +27,7 @@ function parseSession(text) {
   const entries = parseEntries(text);
   const messages = entries.filter((e) => e.type === 'message' && e.message);
   const assistants = messages.filter((e) => e.message.role === 'assistant').map((e) => e.message);
-  return { entries, messages, assistants };
+  return { messages, assistants };
 }
 
 const isNumber = (value) => typeof value === 'number' && Number.isFinite(value);
@@ -64,8 +64,8 @@ function cost(session) {
 const FIGURES = [model, duration, tokens, cost];
 
 export const ompProvider = {
-  readStats(input, now) {
+  readStats(input) {
     const session = parseSession(input);
-    return Object.assign({}, ...FIGURES.map((figure) => figure(session, now)));
+    return Object.assign({}, ...FIGURES.map((figure) => figure(session)));
   },
 };

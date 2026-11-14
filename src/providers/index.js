@@ -1,5 +1,3 @@
-import { ompProvider } from './omp.js';
-
 // Provider registry: the one seam between a harness's session files and the card.
 //
 // A provider is `{ readStats(input, now) }` and returns a partial stats object. `input` is
@@ -31,6 +29,8 @@ import { ompProvider } from './omp.js';
 //   premiumRequests    number   sum of usage.premiumRequests
 //
 // The result of readStats also carries `harness`, the name asked for, which is never n/a.
+
+import { ompProvider } from './omp.js';
 
 export const NA = 'n/a';
 
