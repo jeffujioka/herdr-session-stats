@@ -1,15 +1,7 @@
-import { Database } from 'bun:sqlite';
-import { afterAll, describe, expect, test } from 'bun:test';
-import { mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
-import { tmpdir } from 'node:os';
-import { join } from 'node:path';
-import { formatContext } from '../src/format.js';
-import { NA, readStats, registerProvider } from '../src/providers/index.js';
-import {
-  createOmpProvider,
-  readCompactionSettings,
-  readModelCatalogue,
-} from '../src/providers/omp.js';
+import { describe, expect, test } from 'bun:test';
+import { readFileSync } from 'node:fs';
+import { formatContext, formatTokens } from '../src/format.js';
+import { NA, readStats } from '../src/providers/index.js';
 
 const NOW = Date.parse('2026-11-02T12:00:00.000Z');
 const fixture = (name) => readFileSync(new URL(`./fixtures/omp/${name}`, import.meta.url), 'utf8');
@@ -27,16 +19,16 @@ function assistant(promptTokens, extra = {}) {
   return JSON.stringify({ type: 'message', id: 'a', timestamp: '2026-11-02T11:00:00.000Z', message });
 }
 
-// A provider fed by hand-written sources: `models` is what the catalogue lists for any
-// provider (undefined = catalogue unreadable), `compaction` the compaction block of
-// omp's config (undefined = config unreadable; `{}` = no compaction key). It is read through
-// the registry, which fills every figure the provider leaves out with n/a.
+// The omp provider through the registry, which fills every figure it leaves out with n/a.
+// The sources are plain values, as the mod hands them in: `models` is the model list of the
+// session's provider in omp's catalogue (absent = catalogue unreadable), `compaction` the
+// compaction block of omp's config (undefined = config unreadable; `{}` = no compaction key).
 function provider(sources) {
-  const { models } = sources;
   const compaction = 'compaction' in sources ? sources.compaction : {};
-  const omp = createOmpProvider({ modelCatalogue: () => models, compactionSettings: () => compaction });
-  registerProvider('omp-context-test', omp);
-  return { readStats: (input, now) => readStats('omp-context-test', input, now) };
+  return {
+    readStats: (text, now) =>
+      readStats('omp', { text, sources: { catalogue: sources.models ?? null, compaction: compaction ?? null } }, now),
+  };
 }
 
 const window200k = [{ id: 'm', contextWindow: 200_000 }];
@@ -49,6 +41,11 @@ describe('omp session: context window and autocompactions', () => {
     expect(stats.contextMax).toBe(200_000);
     expect(stats.contextPercent).toBe(0.25);
     expect(formatContext(stats)).toBe('25%/200k');
+
+    // a max without any logged usage still shows, with the percentage as n/a
+    const unused = provider({ models: window200k }).readStats(assistant(undefined, { contextSnapshot: undefined }), NOW);
+    expect(unused.contextPercent).toBe(NA);
+    expect(formatContext(unused)).toBe('n/a of 200k');
   });
 
   test('usage is the latest assistant message that carries a snapshot', () => {
@@ -64,6 +61,9 @@ describe('omp session: context window and autocompactions', () => {
     const text = assistant(250_000, { model: 'claude-sonnet-5.5-1m' });
 
     expect(formatContext(provider({ models }).readStats(text, NOW))).toBe('25%/1M');
+    // a size that rounds up to a thousand k is written in M
+    expect(formatTokens(999_500)).toBe('1M');
+    expect(formatTokens(999_499)).toBe('999k');
   });
 
   test('unknown max is n/a', () => {
@@ -155,60 +155,5 @@ describe('omp session: context window and autocompactions', () => {
     const stats = provider({ models: window200k, compaction }).readStats(assistant(50_000), NOW);
 
     expect(stats.headroomTokens).toBe(120_000);
-  });
-});
-
-describe('omp readers', () => {
-  const dir = mkdtempSync(join(tmpdir(), 'omp-context-'));
-  afterAll(() => rmSync(dir, { recursive: true, force: true }));
-
-  function catalogue(rows) {
-    const path = join(dir, `models-${Math.random().toString(36).slice(2)}.db`);
-    const db = new Database(path);
-    db.run('CREATE TABLE model_cache (provider_id TEXT NOT NULL, updated_at INTEGER NOT NULL, models TEXT NOT NULL)');
-    for (const [id, updatedAt, models] of rows) {
-      db.run('INSERT INTO model_cache VALUES (?, ?, ?)', [id, updatedAt, JSON.stringify(models)]);
-    }
-    db.close();
-    return path;
-  }
-
-  test('catalogue reads the newest row of the provider', () => {
-    const path = catalogue([
-      ['gh:models-v2:old', 100, [{ id: 'm', contextWindow: 1 }]],
-      ['gh:models-v2:new', 300, [{ id: 'm', contextWindow: 3 }]],
-      ['gh:models-v2:mid', 200, [{ id: 'm', contextWindow: 2 }]],
-      ['ghx:models-v2:newer', 400, [{ id: 'm', contextWindow: 4 }]],
-    ]);
-
-    expect(readModelCatalogue(path, 'gh')).toEqual([{ id: 'm', contextWindow: 3 }]);
-    expect(readModelCatalogue(path, 'none')).toBeUndefined();
-    expect(readModelCatalogue(join(dir, 'missing.db'), 'gh')).toBeUndefined();
-  });
-
-  test('catalogue is read only', () => {
-    const path = catalogue([['gh:models-v2:a', 1, []]]);
-    readModelCatalogue(path, 'gh');
-    const db = new Database(path, { readonly: true });
-
-    expect(db.query('SELECT count(*) AS n FROM model_cache').get().n).toBe(1);
-    db.close();
-  });
-
-  test('compaction settings read the compaction block of the config', () => {
-    const path = join(dir, 'config.yml');
-    writeFileSync(path, 'theme:\n  dark: x\ncompaction:\n  thresholdPercent: 80\n');
-
-    expect(readCompactionSettings(path)).toEqual({ thresholdPercent: 80 });
-    writeFileSync(path, 'theme:\n  dark: x\n');
-    expect(readCompactionSettings(path)).toEqual({});
-  });
-
-  test('unreadable config has no settings', () => {
-    const path = join(dir, 'broken.yml');
-    writeFileSync(path, 'compaction: [unclosed\n  - : :');
-
-    expect(readCompactionSettings(join(dir, 'missing.yml'))).toBeUndefined();
-    expect(readCompactionSettings(path)).toBeUndefined();
   });
 });
