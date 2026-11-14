@@ -1,8 +1,10 @@
 // Provider registry: the one seam between a harness's session files and the card.
 //
-// A provider is `{ readStats(input, now) }` and returns a partial stats object. `input` is
-// whatever the provider reads from (omp: the jsonl text of the session tail; opencode: a
-// database path); the registry does not look inside it. `now` is epoch milliseconds; a figure
+// A provider is `{ readStats(input, now) }`, synchronous, and returns a partial stats object.
+// `input` is whatever the provider reads from (omp: the jsonl text of the session, or
+// `{ text, sources }` with the omp files already read by the caller; opencode: a database
+// path); the registry does not look inside it. A provider never reads a file itself: the mod
+// does its I/O asynchronously and hands plain values in. `now` is epoch milliseconds; a figure
 // measured from the present (cacheLeftMs) reads it, the others ignore it.
 //
 // Stats shape (single place; docs/omp-session-format.md repeats it with the omp sources).
