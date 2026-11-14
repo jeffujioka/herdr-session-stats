@@ -60,8 +60,10 @@ function lastAssistantProvider(text) {
 }
 
 // A value of the small YAML subset omp writes: a number, true or false, null, a quoted or a
-// plain string, or `{}`. Anything else (a flow map with content, a list, a block scalar, an
-// anchor) is not read, and throws.
+// plain string, or `{}`. Anything else throws, so the settings are unknown (null) rather than
+// misread: a flow map with content, a list, a block scalar, an anchor; a number in another
+// notation (`1e5`, `1_000`, `0x10`), a YAML 1.1 word for a boolean or null (`no`, `On`), and
+// a quoted string with text after it, which a plain string would swallow.
 function parseScalar(raw) {
   const quoted = /^"([^"]*)"\s*(?:#.*)?$|^'([^']*)'\s*(?:#.*)?$/.exec(raw);
   if (quoted) return quoted[1] ?? quoted[2];
@@ -71,7 +73,9 @@ function parseScalar(raw) {
   if (value === 'false') return false;
   if (value === 'null' || value === '~') return null;
   if (value === '{}') return {};
-  if (/^[{[|>&*!%@`-]/.test(value)) throw new Error(`unsupported YAML value: ${value}`);
+  if (/^[{[|>&*!%@`"'\d.+-]/.test(value) || /^(y|n|yes|no|on|off|true|false|null)$/i.test(value)) {
+    throw new Error(`unsupported YAML value: ${value}`);
+  }
   return value;
 }
 
