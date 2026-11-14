@@ -2,7 +2,8 @@
 //
 // A provider is `{ readStats(input, now) }` and returns a partial stats object. `input` is
 // whatever the provider reads from (omp: the jsonl text of the session tail; opencode: a
-// database path); the registry does not look inside it. `now` is epoch milliseconds.
+// database path); the registry does not look inside it. `now` is epoch milliseconds; a figure
+// measured from the present (cacheLeftMs) reads it, the others ignore it.
 //
 // Stats shape (single place; docs/omp-session-format.md repeats it with the omp sources).
 // Every figure is a plain value or the string 'n/a' (NA); the card formats, never estimates.
