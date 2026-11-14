@@ -5,8 +5,8 @@ import { NA, readStats } from '../src/providers/index.js';
 const fixture = (name) => readFileSync(new URL(`./fixtures/omp/${name}`, import.meta.url), 'utf8');
 
 // One synthetic assistant message entry; `usage` is left out when null.
-function assistant(isoTime, usage) {
-  const message = { role: 'assistant', provider: 'p', model: 'm', stopReason: 'stop' };
+function assistant(isoTime, usage, model = 'm') {
+  const message = { role: 'assistant', provider: 'p', model, stopReason: 'stop' };
   if (usage) message.usage = usage;
   return JSON.stringify({ type: 'message', id: 'a', timestamp: isoTime, message });
 }
@@ -20,6 +20,14 @@ describe('omp session: model, duration, tokens and cost', () => {
     // first message 10:05:41.002Z, last message 10:15:39.629Z
     expect(stats.durationMs).toBe(598627);
     expect(stats.totalTokens).toBe(18078 + 23061 + 16429 + 21210);
+
+    // The model is the latest assistant message's, not the first one's.
+    const switched = [
+      assistant('2026-11-02T10:00:00.000Z', null, 'model-a'),
+      assistant('2026-11-02T10:01:00.000Z', null, 'model-b'),
+      assistant('2026-11-02T10:02:00.000Z', null, 'model-c'),
+    ].join('\n');
+    expect(readStats('omp', switched, Date.now()).model).toBe('model-c');
   });
 
   test('missing usage field is n/a', () => {
