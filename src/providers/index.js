@@ -1,3 +1,5 @@
+import { ompProvider } from './omp.js';
+
 // Provider registry: the one seam between a harness's session files and the card.
 //
 // A provider is `{ readStats(input, now) }` and returns a partial stats object. `input` is
@@ -59,6 +61,9 @@ const providers = new Map();
 export function registerProvider(harness, provider) {
   providers.set(harness, provider);
 }
+
+// Built-in providers. One line each; omp.js does not import this file, so there is no cycle.
+registerProvider('omp', ompProvider);
 
 // Always returns every field: the provider's value where it gave one, else n/a.
 export function readStats(harness, input, now) {
