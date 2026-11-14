@@ -91,6 +91,15 @@ describe('omp session: context window and autocompactions', () => {
     expect(provider({ models: window200k }).readStats(fixture('basic.jsonl'), NOW).autocompactions).toBe(0);
   });
 
+  test('a compaction count handed in stands for a tail window', () => {
+    // the mod counts the whole file by a cheap read; the provider takes that number as is
+    const tail = fixture('compacted.jsonl').split('\n').slice(8).join('\n');
+    const stats = readStats('omp', { text: tail, sources: { compactionCount: 3 } }, NOW);
+
+    expect(stats.autocompactions).toBe(3);
+    expect(readStats('omp', { text: tail, sources: { compactionCount: null } }, NOW).autocompactions).toBe(NA);
+  });
+
   test('unknown compactions is n/a', () => {
     // a tail window that starts after the session header cannot say how many compactions the
     // earlier part held, even when it holds one itself
