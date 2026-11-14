@@ -173,11 +173,23 @@ describe('cards', () => {
   });
 
   test('a missing sqlite3, database or config.yml reads n/a', async () => {
-    const { build } = builder(localWorld());
-    const [card] = await build([pane()], NOW);
-    expect(card.stats.contextMax).toBe(NA);
-    expect(card.stats.headroomTokens).toBe(NA);
-    expect(card.stats.model).not.toBe(NA);
+    const db = [{ id: 'claude-sonnet-5.5-1m', contextWindow: 1000000 }];
+    const config = 'compaction:\n  enabled: true\n';
+    // [what is there, contextMax, whether the headroom is known]
+    const cases = [
+      ['database and config.yml', { db, config }, 1000000, true],
+      ['no database', { config }, NA, false],
+      ['no config.yml', { db }, 1000000, false],
+      ['a config.yml the reader does not understand', { db, config: 'compaction:\n  thresholdTokens: 1e5\n' }, 1000000, false],
+      ['neither', {}, NA, false],
+    ];
+    for (const [name, extra, contextMax, known] of cases) {
+      const { build } = builder(localWorld(extra));
+      const [card] = await build([pane()], NOW);
+      expect([name, card.stats.contextMax]).toEqual([name, contextMax]);
+      expect([name, card.stats.headroomTokens !== NA]).toEqual([name, known]);
+      expect(card.stats.model).not.toBe(NA);
+    }
   });
 
   test('catalogue and compaction settings are read once a minute', async () => {
@@ -212,6 +224,32 @@ describe('cards', () => {
     await new Promise((resolve) => setTimeout(resolve, 20));
     expect(onBs()).toBe(asked);
     expect(latest.map((c) => c.id)).toEqual(['local']);
+  });
+
+  test('a pane still being resolved is loading, not an empty list of agents', async () => {
+    let release;
+    const gate = new Promise((resolve) => (release = resolve));
+    const { exec, readTextFile } = fakeExec(localWorld());
+    const slow = async (...args) => {
+      await gate;
+      return exec(...args);
+    };
+    const { build } = createCardBuilder({ exec: slow, readTextFile, home: HOME });
+    const panes = [pane()];
+    const updates = [];
+    const first = build(panes, NOW, (cards) => updates.push(cards.map((c) => c.id)));
+
+    // a later tick starts nothing and returns at once, with no card yet: that empty list is
+    // not "no agents" (the mod counts agentPanes for that) and not a settled result
+    const second = await build(panes, NOW + 2000, (cards) => updates.push(cards.map((c) => c.id)));
+    expect(second).toEqual([]);
+    expect(agentPanes(panes)).toHaveLength(1);
+    expect(updates.every((ids) => ids.length === 0)).toBe(true);
+
+    // the card arrives through the call that started the pane
+    release();
+    expect(await first).toHaveLength(1);
+    expect(updates.at(-1)).toEqual(['p1']);
   });
 
   test('an unreachable machine still gives a card with the folder', async () => {
@@ -278,6 +316,11 @@ describe('session folder', () => {
     expect(parseCompactionConfig('compaction:\n  methodOrder: [a, b]\n')).toBeNull();
     expect(parseCompactionConfig('compaction:\n  methodOrder:\n    - a\n')).toBeNull();
     expect(parseCompactionConfig('compaction:\n\tenabled: true\n')).toBeNull();
+    // a scalar in a notation the reader does not know is not read as a string and ignored
+    for (const value of ['1e5', '1_000', '0x10', '"x" y', 'no', 'On', 'True']) {
+      expect(parseCompactionConfig(`compaction:\n  thresholdTokens: ${value}\n`)).toBeNull();
+    }
+    expect(parseCompactionConfig('compaction:\n  remoteEndpoint: https://x.test/v1\n')).toEqual({ remoteEndpoint: 'https://x.test/v1' });
   });
 });
 
