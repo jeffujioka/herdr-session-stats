@@ -186,6 +186,33 @@ describe('refresh', () => {
     expect((await reader.read(file(text, 3000))).sources.compactionCount).toBe(3);
   });
 
+  test('the scanned size advances by UTF-8 bytes, not characters', async () => {
+    // a byte-accurate stand-in: the file is a Buffer, `tail -c +N` starts at byte N and
+    // `grep -b` prints byte offsets, as the real programs do
+    let bytes = Buffer.from(bigSession());
+    async function exec(command, args) {
+      if (command === 'tail') {
+        const from = args[1].startsWith('+') ? Number(args[1].slice(1)) - 1 : Math.max(0, bytes.length - Number(args[1]));
+        return { code: 0, stdout: bytes.subarray(from).toString('utf8'), stderr: '' };
+      }
+      const pattern = Buffer.from(args.at(-3));
+      const found = [];
+      for (let at = bytes.indexOf(pattern); at >= 0; at = bytes.indexOf(pattern, at + 1)) found.push(`${at}:${args.at(-3)}\n`);
+      return { code: found.length ? 0 : 1, stdout: found.join(''), stderr: '' };
+    }
+    const reader = createSessionReader({ exec });
+    const listed = () => ({ path: PATH, mtimeMs: 1000, size: bytes.length });
+    expect((await reader.read(listed())).sources.compactionCount).toBe(2);
+
+    // é is 2 bytes, 漢 is 3, 😀 is 4 (two UTF-16 units): each appended line is longer in bytes
+    // than in characters, and a wrong advance would start the next read inside the last line
+    // and count it again
+    for (const [n, id] of ['c3', 'c4', 'c5'].entries()) {
+      bytes = Buffer.concat([bytes, Buffer.from(`${entry({ type: 'compaction', id, summary: 'é漢😀'.repeat(10) })}\n`)]);
+      expect((await reader.read(listed())).sources.compactionCount).toBe(3 + n);
+    }
+  });
+
   test('a replaced, smaller file is counted from its start', async () => {
     const text = bigSession();
     const files = new Map([[PATH, text]]);

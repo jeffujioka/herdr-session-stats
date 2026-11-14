@@ -15,14 +15,15 @@ export const TAIL_BYTES = 256 * 1024;
 const COMPACTION_ENTRY = '"type":"compaction"';
 
 // herdr's runtime has no TextEncoder: the byte length of a string in UTF-8 is counted from its
-// UTF-16 code units (a surrogate pair is one 4-byte character).
+// UTF-16 code units. A surrogate pair is one 4-byte character; a lone surrogate is 3 bytes, the
+// U+FFFD TextEncoder would write for it.
 function utf8Length(text) {
   let bytes = 0;
   for (let i = 0; i < text.length; i++) {
     const unit = text.charCodeAt(i);
     if (unit < 0x80) bytes += 1;
     else if (unit < 0x800) bytes += 2;
-    else if (unit >= 0xd800 && unit <= 0xdbff) {
+    else if (unit >= 0xd800 && unit <= 0xdbff && text.charCodeAt(i + 1) >= 0xdc00 && text.charCodeAt(i + 1) <= 0xdfff) {
       bytes += 4;
       i++;
     } else bytes += 3;
