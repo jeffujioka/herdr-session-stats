@@ -2,8 +2,9 @@
 //
 // A provider is `{ readStats(input, now) }`, synchronous, and returns a partial stats object.
 // `input` is whatever the provider reads from (omp: the jsonl text of the session, or
-// `{ text, sources }` with the omp files already read by the caller; opencode: a database
-// path); the registry does not look inside it. A provider never reads a file itself: the mod
+// `{ text, sources }` with the omp files already read by the caller; opencode: `{ messages,
+// compactions }`, the rows of the session read from its database); the registry does not look
+// inside it. A provider never reads a file itself: the mod
 // does its I/O asynchronously and hands plain values in. `now` is epoch milliseconds; a figure
 // measured from the present (cacheLeftMs) reads it, the others ignore it.
 //
@@ -49,6 +50,8 @@
 
 import { ompProvider } from './omp.js';
 import { createOmpSessions } from './omp-sources.js';
+import { opencodeProvider } from './opencode.js';
+import { createOpencodeSessions } from './opencode-sources.js';
 
 export const NA = 'n/a';
 
@@ -82,6 +85,7 @@ export function registerProvider(harness, provider) {
 
 // Built-in providers. One line each; omp.js does not import this file, so there is no cycle.
 registerProvider('omp', { ...ompProvider, createSessions: createOmpSessions });
+registerProvider('opencode', { ...opencodeProvider, createSessions: createOpencodeSessions });
 
 // Always returns every field: the provider's value where it gave one, else n/a.
 export function readStats(harness, input, now) {
