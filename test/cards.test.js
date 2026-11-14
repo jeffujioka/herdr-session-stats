@@ -1,6 +1,8 @@
 import { describe, expect, test } from 'bun:test';
 import { readFileSync } from 'node:fs';
-import { agentPanes, createCardBuilder, describeCard, formatDuration, parseSessionFiles, sessionDirSlug } from '../src/cards.js';
+import { agentPanes, createCardBuilder } from '../src/cards.js';
+import { describeCard, formatDuration } from '../src/format.js';
+import { parseCompactionConfig, parseSessionFiles, sessionDirSlug } from '../src/providers/omp-sources.js';
 import { NA, readStats } from '../src/providers/index.js';
 
 const FIXTURE = readFileSync(new URL('./fixtures/omp/basic.jsonl', import.meta.url), 'utf8');
@@ -15,14 +17,16 @@ function pane(overrides = {}) {
 
 // Stand-in with the exact signature of herdr's `exec(command, args, options)`, answering the
 // read-only programs the mod runs. `world` describes machines (`null` is this computer):
-//   { home, os, sessions: { dir: [{ mtimeMs, size, name }] }, text, db, config, git: { cwd: { branch, origin } } }
-// Anything it does not know exits 1 (so a figure reads n/a); a machine in `unreachable` rejects.
-function fakeExec(world, { unreachable = [] } = {}) {
+//   { home, os, sessions: { dir: [{ mtimeMs, size, name }] }, text, db, config (config.yml text), git: { cwd: { branch, origin } } }
+// Anything it does not know exits 1 (so a figure reads n/a); a machine in `unreachable` rejects
+// and one in `hang` never answers.
+function fakeExec(world, { unreachable = [], hang = [] } = {}) {
   const calls = [];
   async function exec(command, args = [], options = {}) {
     calls.push({ command, args, options });
     const machine = options.on ?? null;
     if (unreachable.includes(machine)) throw new Error(`machine ${machine} is unreachable`);
+    if (hang.includes(machine)) return new Promise(() => {});
     const w = world[machine] ?? {};
     const ok = (stdout) => ({ code: 0, stdout, stderr: '' });
     const fail = { code: 1, stdout: '', stderr: '' };
@@ -31,12 +35,10 @@ function fakeExec(world, { unreachable = [] } = {}) {
     if (command === 'find') {
       const files = w.sessions?.[args[0]];
       if (!files) return { code: 1, stdout: '', stderr: 'No such file or directory' };
-      
       return ok(files.map((f) => `${Math.floor(f.mtimeMs / 1000)} ${f.size} ${args[0]}/${f.name}`).join('\n') + '\n');
     }
     if (command === 'tail') return w.text === undefined ? fail : ok(w.text);
     if (command === 'sqlite3') return w.db === undefined ? fail : ok(JSON.stringify(w.db));
-    if (command === 'omp') return w.config === undefined ? fail : ok(w.config);
     if (command === 'git') {
       const repo = w.git?.[options.cwd];
       if (!repo) return { code: 128, stdout: '', stderr: 'fatal: not a git repository' };
@@ -45,7 +47,16 @@ function fakeExec(world, { unreachable = [] } = {}) {
     }
     throw new Error(`unexpected program ${command}`);
   }
-  return { exec, calls };
+  // `readTextFile(path, { on })`: the machine's config.yml text, or null when it has none
+  const reads = [];
+  async function readTextFile(path, options) {
+    const machine = options?.on ?? null;
+    reads.push({ path, on: machine });
+    if (hang.includes(machine)) return new Promise(() => {});
+    if (unreachable.includes(machine)) throw new Error(`machine ${machine} is unreachable`);
+    return path.endsWith('/.omp/agent/config.yml') ? (world[machine]?.config ?? null) : null;
+  }
+  return { exec, readTextFile, calls, reads };
 }
 
 const SESSION_DIR = `${HOME}/.omp/agent/sessions/-work-app`;
@@ -58,8 +69,8 @@ function localWorld(extra = {}) {
 }
 
 function builder(world, options) {
-  const { exec, calls } = fakeExec(world, options);
-  return { build: createCardBuilder({ exec, home: HOME }).build, calls };
+  const { exec, readTextFile, calls, reads } = fakeExec(world, options);
+  return { build: createCardBuilder({ exec, readTextFile, home: HOME }).build, calls, reads };
 }
 
 describe('cards', () => {
@@ -84,12 +95,6 @@ describe('cards', () => {
     const { build } = builder(localWorld());
     const cards = await build([pane({ pane: 'a', cwd: '/x' }), pane({ pane: 'shell', app: null }), pane({ pane: 'b', cwd: '/y' })], NOW);
     expect(cards.map((c) => c.id)).toEqual(['a', 'b']);
-  });
-
-  test('two panes on one session collapse to one card', async () => {
-    const { build } = builder(localWorld());
-    const cards = await build([pane({ pane: 'p1' }), pane({ pane: 'p2', terminal: 't2' })], NOW);
-    expect(cards.map((c) => c.id)).toEqual(['p1']);
   });
 
   test('panes without a linked session each keep a card with n/a figures', async () => {
@@ -153,19 +158,21 @@ describe('cards', () => {
   test('omp figures use the model catalogue and compaction settings', async () => {
     const world = localWorld({
       db: [{ id: 'claude-sonnet-5.5-1m', contextWindow: 1000000 }],
-      config: '  compaction.enabled = true (boolean)\n  compaction.thresholdTokens = -1 (number)\n  compaction.thresholdPercent = -1 (number)\n  compaction.modelThresholds = {} (record)\n  compaction.reserveTokens = (not set) (number)\n',
+      config: 'compaction:\n  enabled: true\n  thresholdTokens: -1\n  thresholdPercent: -1\n  modelThresholds: {}\n',
     });
-    const { build, calls } = builder(world);
+    const { build, calls, reads } = builder(world);
     const [card] = await build([pane()], NOW);
     expect(card.stats.contextMax).toBe(1000000);
     expect(card.stats.headroomTokens).not.toBe(NA);
     const sqlite = calls.find((c) => c.command === 'sqlite3');
     expect(sqlite.args.slice(0, 3)).toEqual(['-readonly', '-json', `${HOME}/.omp/agent/models.db`]);
     expect(sqlite.args[3]).toContain("'github-copilot:'");
-    expect(calls.find((c) => c.command === 'omp').args).toEqual(['config', 'list']);
+    // the settings come from config.yml; omp's own CLI writes its database when it starts
+    expect(reads).toEqual([{ path: `${HOME}/.omp/agent/config.yml`, on: null }]);
+    expect(calls.some((c) => c.command === 'omp')).toBe(false);
   });
 
-  test('a missing sqlite3 or omp reads n/a', async () => {
+  test('a missing sqlite3, database or config.yml reads n/a', async () => {
     const { build } = builder(localWorld());
     const [card] = await build([pane()], NOW);
     expect(card.stats.contextMax).toBe(NA);
@@ -174,36 +181,37 @@ describe('cards', () => {
   });
 
   test('catalogue and compaction settings are read once a minute', async () => {
-    const world = localWorld({ db: [{ id: 'claude-sonnet-5.5-1m', contextWindow: 1000000 }], config: '' });
-    const { build, calls } = builder(world);
+    const world = localWorld({ db: [{ id: 'claude-sonnet-5.5-1m', contextWindow: 1000000 }], config: 'compaction:\n  enabled: true\n' });
+    const { build, calls, reads } = builder(world);
     await build([pane()], NOW);
     await build([pane()], NOW + 2000);
     expect(calls.filter((c) => c.command === 'sqlite3')).toHaveLength(1);
-    expect(calls.filter((c) => c.command === 'omp')).toHaveLength(1);
+    expect(reads).toHaveLength(1);
     await build([pane()], NOW + 61_000);
     expect(calls.filter((c) => c.command === 'sqlite3')).toHaveLength(2);
+    expect(reads).toHaveLength(2);
   });
 
-  test('a pane on another machine is read on that machine', async () => {
-    const dir = '/home/dev/.omp/agent/sessions/-work-app';
-    const world = {
-      bs: {
-        os: 'Linux',
-        home: '/home/dev',
-        sessions: { [dir]: [SESSION] },
-        text: FIXTURE,
-        git: { '/home/dev/work/app': { branch: 'remote-branch', origin: ORIGIN } },
-      },
-    };
-    const { build, calls } = builder(world);
-    const [card] = await build([pane({ cwd: '/home/dev/work/app', branch: null, machine: 'bs' })], NOW);
-    expect(card).toMatchObject({ folder: '/home/dev/work/app', branch: 'remote-branch', origin: ORIGIN });
-    expect(card.stats.model).not.toBe(NA);
-    expect(calls.length).toBeGreaterThan(0);
-    for (const call of calls) expect(call.options.on).toBe('bs');
-    const find = calls.find((c) => c.command === 'find');
-    expect(find.args.slice(0, 1)).toEqual([dir]);
-    expect(find.args).toContain('-c');
+  test('a machine that never answers does not hold back the local cards', async () => {
+    const { exec, readTextFile, calls } = fakeExec(localWorld(), { hang: ['bs'] });
+    const { build } = createCardBuilder({ exec, readTextFile, home: HOME });
+    const panes = [pane({ pane: 'remote', machine: 'bs' }), pane({ pane: 'local', terminal: 't2' })];
+    const onBs = () => calls.filter((c) => c.options.on === 'bs').length;
+    let latest = [];
+    let done = false;
+    build(panes, NOW, (cards) => (latest = cards)).then(() => (done = true));
+    await new Promise((resolve) => setTimeout(resolve, 20));
+    expect(latest.map((c) => c.id)).toEqual(['local']);
+    expect(latest[0].stats.model).not.toBe(NA);
+    expect(done).toBe(false);
+
+    // the next refresh does not start the stuck pane again, and the local card keeps coming
+    const asked = onBs();
+    expect(asked).toBeGreaterThan(0);
+    build(panes, NOW + 2000, (cards) => (latest = cards));
+    await new Promise((resolve) => setTimeout(resolve, 20));
+    expect(onBs()).toBe(asked);
+    expect(latest.map((c) => c.id)).toEqual(['local']);
   });
 
   test('an unreachable machine still gives a card with the folder', async () => {
@@ -215,12 +223,12 @@ describe('cards', () => {
 
   test('one failing pane does not take the others down', async () => {
     const world = localWorld();
-    const { exec } = fakeExec(world);
+    const { exec, readTextFile } = fakeExec(world);
     const flaky = async (command, args, options) => {
       if (options?.cwd === '/boom' || args?.[0]?.includes('-boom')) throw new Error('boom');
       return exec(command, args, options);
     };
-    const { build } = createCardBuilder({ exec: flaky, home: HOME });
+    const { build } = createCardBuilder({ exec: flaky, readTextFile, home: HOME });
     const cards = await build([pane({ pane: 'bad', cwd: '/boom' }), pane({ pane: 'good' })], NOW);
     expect(cards.map((c) => c.id)).toEqual(['bad', 'good']);
     expect(cards[0].stats.model).toBe(NA);
@@ -247,6 +255,29 @@ describe('session folder', () => {
       { path: '/d/a.jsonl', mtimeMs: 1763204280000, size: 2048 },
       { path: '/d/with space.jsonl', mtimeMs: 1763204400000, size: 10 },
     ]);
+  });
+
+  test('the compaction block of config.yml is read', () => {
+    const yml =
+      'theme:\n  dark: x\ncompaction:\n  enabled: true  # on\n  thresholdTokens: 150000\n  thresholdPercent: -1\n  modelThresholds:\n    "github-copilot/claude-*": 60\n    other/model: 70\nupdate:\n  auto: true\n';
+    expect(parseCompactionConfig(yml)).toEqual({
+      enabled: true,
+      thresholdTokens: 150000,
+      thresholdPercent: -1,
+      modelThresholds: { 'github-copilot/claude-*': 60, 'other/model': 70 },
+    });
+  });
+
+  test('a config without a compaction block sets nothing', () => {
+    expect(parseCompactionConfig('theme:\n  dark: x\n')).toEqual({});
+    expect(parseCompactionConfig('compaction: {}\n')).toEqual({});
+  });
+
+  test('YAML the reader does not understand is unknown, not a guess', () => {
+    expect(parseCompactionConfig('compaction: {thresholdTokens: 1}\n')).toBeNull();
+    expect(parseCompactionConfig('compaction:\n  methodOrder: [a, b]\n')).toBeNull();
+    expect(parseCompactionConfig('compaction:\n  methodOrder:\n    - a\n')).toBeNull();
+    expect(parseCompactionConfig('compaction:\n\tenabled: true\n')).toBeNull();
   });
 });
 

@@ -4,8 +4,9 @@
 
 import { View, div } from "gpui-kit";
 import { v_flex, h_flex } from "gpui-base";
-import { exec, home, panes, spaces, theme } from "herdr";
-import { createCardBuilder, describeCard } from "./cards.js";
+import { exec, home, panes, readTextFile, spaces, theme } from "herdr";
+import { createCardBuilder } from "./cards.js";
+import { describeCard } from "./format.js";
 import { REFRESH_INTERVAL_MS } from "./refresh.js";
 
 // The panes as `panes()` reports them, each with the machine of its space: the pane's tab
@@ -50,31 +51,39 @@ export default class SessionStats extends View {
   init(_props, cx) {
     this.cards = [];
     this.loaded = false;
-    this.busy = false;
-    this.builder = createCardBuilder({ exec, home: home() });
+    this.problem = null;
+    this.builder = createCardBuilder({ exec, readTextFile, home: home() });
     cx.timer.every(REFRESH_INTERVAL_MS, (cx) => this.refresh(cx));
     this.refresh(cx);
   }
 
-  // One refresh at a time: a slow machine makes the next tick skip, never pile up.
+  // Every tick starts a refresh. A card shows as soon as its own pane is resolved, so a slow
+  // machine holds back only its own cards; the builder does not restart a pane that an earlier
+  // refresh is still resolving.
   refresh(cx) {
-    if (this.busy) return;
-    this.busy = true;
     cx.spawn(async (cx) => {
+      let panes;
       try {
-        this.cards = await this.builder.build(livePanes(), Date.now());
-        this.loaded = true;
+        panes = livePanes();
       } catch (error) {
-        console.log(`herdr-session-stats: refresh failed: ${error?.message ?? error}`);
-      } finally {
-        this.busy = false;
+        console.log(`herdr-session-stats: cannot read panes: ${error?.message ?? error}`);
+        this.problem = "Cannot read panes";
+        cx.notify();
+        return;
       }
+      this.problem = null;
+      this.cards = await this.builder.build(panes, Date.now(), (cards) => {
+        this.cards = cards;
+        cx.notify();
+      });
+      this.loaded = true;
       cx.notify();
     });
   }
 
   render() {
     const t = theme();
+    const note = this.problem ?? (this.cards.length === 0 ? (this.loaded ? "No agents" : "Loading…") : null);
     return v_flex()
       .id("session-stats")
       .size_full()
@@ -83,6 +92,6 @@ export default class SessionStats extends View {
       .bg(t.chrome)
       .overflow_y_scrollbar()
       .children(this.cards.map((c) => card(c, t)))
-      .when(this.loaded && this.cards.length === 0, (el) => el.child(div().text_size(12).text_color(t.dim).child("No agents")));
+      .when(note !== null, (el) => el.child(div().text_size(12).text_color(t.dim).child(note)));
   }
 }

@@ -7,6 +7,20 @@
 // does its I/O asynchronously and hands plain values in. `now` is epoch milliseconds; a figure
 // measured from the present (cacheLeftMs) reads it, the others ignore it.
 //
+// A provider may also carry `createSessions({ execOn, readTextOn })`, the hook that finds its
+// sessions and reads their plain-value sources; it lives in the provider's own
+// `src/providers/<harness>-sources.js`, so adding a harness touches only its provider, its
+// sources file and one registry line below. `execOn(machine)` and `readTextOn(machine)` are the
+// app's `exec` and `readTextFile` bound to a machine (null: this computer; `exec` also with a
+// timeout), read-only use only. `createSessions` runs once per card builder and returns
+//   link({ machine, cwd, home, os, now })  -> Promise<{ path, mtimeMs, size } | null>
+//     the session file the pane's folder links to (the newest one that changed within
+//     LINK_WINDOW_MS, see session-link.js), or null; `home` and `os` (`uname -s`) are the
+//     machine's;
+//   read(file, { machine, home, now })     -> Promise<input>
+//     the `input` of this provider's `readStats` for a linked file.
+// Both may reject: the card then reads n/a. A provider without the hook yields no session.
+//
 // Stats shape (single place; docs/omp-session-format.md repeats it with the omp sources).
 // Every figure is a plain value or the string 'n/a' (NA); the card formats, never estimates.
 // Units: ms for times, tokens for sizes, USD for money, 0..1 for rates.
@@ -34,6 +48,7 @@
 // The result of readStats also carries `harness`, the name asked for, which is never n/a.
 
 import { ompProvider } from './omp.js';
+import { createOmpSessions } from './omp-sources.js';
 
 export const NA = 'n/a';
 
@@ -66,7 +81,7 @@ export function registerProvider(harness, provider) {
 }
 
 // Built-in providers. One line each; omp.js does not import this file, so there is no cycle.
-registerProvider('omp', ompProvider);
+registerProvider('omp', { ...ompProvider, createSessions: createOmpSessions });
 
 // Always returns every field: the provider's value where it gave one, else n/a.
 export function readStats(harness, input, now) {
@@ -76,4 +91,11 @@ export function readStats(harness, input, now) {
     stats[field] = provided[field] ?? NA;
   }
   return stats;
+}
+
+// A provider's session hook for the card builder, or null for a provider without one (its
+// harness yields no linked session, so every figure reads n/a). The builder passes the
+// provider's `createSessions` the app's I/O bound to a machine, once per builder.
+export function createSessions(harness, io) {
+  return providers.get(harness)?.createSessions?.(io) ?? null;
 }
