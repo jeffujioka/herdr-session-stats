@@ -27,12 +27,14 @@ export function createSessionReader({ exec }) {
   // path -> { count, scannedSize }: compactions in the first `scannedSize` bytes of the file
   const counted = new Map();
 
-  // The first count of a file is one read-only pass over all of it (`grep -c`, which returns
-  // only the number). `scannedSize` starts at the size the lister saw; a line appended
-  // between that listing and the pass is counted twice at worst. Afterwards each refresh
-  // reads only what was appended past `scannedSize`, and advances it up to the last newline
-  // so a half-written line is counted once it is whole. A smaller file than scanned was
-  // replaced, so the count starts over.
+  // The first count of a file is one read-only pass over all of it: `grep -b -o` prints one
+  // short `offset:match` line per compaction, so no file content enters the mod. Only the
+  // matches that start below the size the lister saw count, and `scannedSize` is that size:
+  // a line appended between the listing and the pass lies past it and is counted by the
+  // next incremental read, not twice. Afterwards each refresh reads only what was appended
+  // past `scannedSize`, and advances it up to the last newline so a half-written line is
+  // counted once it is whole. A smaller file than scanned was replaced, so the count starts
+  // over.
   async function countCompactions({ path, size }) {
     if (size <= TAIL_BYTES) {
       counted.delete(path);
@@ -51,10 +53,10 @@ export function createSessionReader({ exec }) {
       seen.scannedSize += encoder.encode(whole).length;
       return seen.count;
     }
-    // grep exits 1 for no match, with the count 0 printed; 2 is an error
-    const { code, stdout } = await exec('grep', ['-c', '-F', COMPACTION_ENTRY, '--', path]);
-    const count = code <= 1 ? Number.parseInt(stdout, 10) : Number.NaN;
-    if (!Number.isFinite(count)) return null;
+    // grep exits 1 for no match, with nothing printed; 2 is an error
+    const { code, stdout } = await exec('grep', ['-b', '-o', '-F', COMPACTION_ENTRY, '--', path]);
+    if (code > 1) return null;
+    const count = stdout.split('\n').filter((line) => line && Number.parseInt(line, 10) < size).length;
     counted.set(path, { count, scannedSize: size });
     return count;
   }

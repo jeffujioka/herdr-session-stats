@@ -27,27 +27,33 @@ function bigSession() {
 }
 
 // In-memory stand-in with the exact signature of herdr's `exec(command, args, options)`:
-// `tail -c N|+N -- path` and `grep -c -F pattern -- path` over a map of path -> text, like the
-// real programs; anything else rejects, as a program that cannot start does. Keeps every call
-// and the bytes it served: what a tail returns, or all a grep had to scan.
-function fakeExec(files) {
+// `tail -c N|+N -- path` and `grep -b -o -F pattern -- path` (`offset:match` per match) over a
+// map of path -> text, like the real programs; anything else rejects, as a program that cannot
+// start does. Keeps every call and the bytes it served: what a tail returns, or all a grep had
+// to scan. `faults` lets a test act before a grep runs (`beforeGrep`) or fail every
+// incremental tail (`failIncremental`).
+function fakeExec(files, faults = {}) {
   const calls = [];
   async function exec(command, args = [], options) {
     const call = { command, args, options, served: 0 };
     calls.push(call);
+    if (command === 'grep') faults.beforeGrep?.();
     const path = args.at(-1);
     const text = files.get(path);
     if (text === undefined) return { code: 1, stdout: '', stderr: `${command}: ${path}: No such file or directory` };
     if (command === 'tail' && args[0] === '-c') {
+      if (faults.failIncremental && args[1].startsWith('+')) return { code: 1, stdout: '', stderr: 'tail: failed' };
       const from = args[1].startsWith('+') ? Number(args[1].slice(1)) - 1 : text.length - Number(args[1]);
       const stdout = text.slice(Math.max(0, from));
       call.served = stdout.length;
       return { code: 0, stdout, stderr: '' };
     }
-    if (command === 'grep' && args[0] === '-c') {
+    if (command === 'grep' && args[0] === '-b' && args[1] === '-o') {
       call.served = text.length;
-      const count = text.split('\n').filter((line) => line.includes(args.at(-3))).length;
-      return { code: count ? 0 : 1, stdout: `${count}\n`, stderr: '' };
+      const pattern = args.at(-3);
+      const found = [];
+      for (let at = text.indexOf(pattern); at >= 0; at = text.indexOf(pattern, at + 1)) found.push(`${at}:${pattern}\n`);
+      return { code: found.length ? 0 : 1, stdout: found.join(''), stderr: '' };
     }
     throw new Error(`cannot start ${command}`);
   }
@@ -67,30 +73,83 @@ describe('refresh', () => {
     const files = new Map([[PATH, text]]);
     const { exec, calls, served } = fakeExec(files);
     const reader = createSessionReader({ exec });
+    await reader.read(file(text)); // the one-off first count is not a refresh of this scenario
 
-    // first refresh: the tail, and the one count over the whole file
-    const input = await reader.read(file(text));
-    const stats = readStats('omp', input, NOW);
-    expect(text.length).toBeGreaterThan(TAIL_BYTES * 3);
-    expect(input.text.length).toBeLessThanOrEqual(TAIL_BYTES);
-    expect(text.endsWith(input.text)).toBe(true);
-    expect(calls[0]).toMatchObject({ command: 'tail', args: ['-c', String(TAIL_BYTES), '--', PATH] });
-    expect(stats.model).toBe('tail-model');
-    expect(stats.autocompactions).toBe(2);
-
-    // unchanged file: only the tail is served, nothing is counted again
-    let mark = calls.length;
-    expect((await reader.read(file(text))).sources.compactionCount).toBe(2);
-    expect(served(mark)).toBeLessThanOrEqual(TAIL_BYTES);
-
-    // appended lines (one holding a compaction): at most the tail plus what was appended
+    // a refresh of a file far larger than the window, with lines appended: the tail, plus the
+    // appended bytes for the count, and never the whole file
     const appended = `${compaction('c3')}\n${message('assistant', 53)}\n`;
     text += appended;
     files.set(PATH, text);
-    mark = calls.length;
-    const after = await reader.read(file(text, 2000));
+    const mark = calls.length;
+    const input = await reader.read(file(text, 2000));
+
+    expect(text.length).toBeGreaterThan(TAIL_BYTES * 3);
+    expect(input.text.length).toBeLessThanOrEqual(TAIL_BYTES);
+    expect(text.endsWith(input.text)).toBe(true);
+    expect(calls[mark]).toMatchObject({ command: 'tail', args: ['-c', String(TAIL_BYTES), '--', PATH] });
     expect(served(mark)).toBeLessThanOrEqual(TAIL_BYTES + appended.length);
-    expect(readStats('omp', after, NOW).autocompactions).toBe(3);
+  });
+
+  test('the first refresh counts the whole file once', async () => {
+    const text = bigSession();
+    const { exec, calls } = fakeExec(new Map([[PATH, text]]));
+    const reader = createSessionReader({ exec });
+    const stats = readStats('omp', await reader.read(file(text)), NOW);
+
+    // the second compaction is in the tail, the first only in the count
+    expect(stats.model).toBe('tail-model');
+    expect(stats.autocompactions).toBe(2);
+
+    // an unchanged file is counted from the cache: no more than the tail is served
+    const mark = calls.length;
+    expect((await reader.read(file(text))).sources.compactionCount).toBe(2);
+    expect(calls.slice(mark).map((call) => call.command)).toEqual(['tail']);
+  });
+
+  test('appended compactions are added to the count', async () => {
+    let text = bigSession();
+    const files = new Map([[PATH, text]]);
+    const { exec } = fakeExec(files);
+    const reader = createSessionReader({ exec });
+    await reader.read(file(text));
+
+    text += `${compaction('c3')}\n${message('assistant', 53)}\n`;
+    files.set(PATH, text);
+    expect((await reader.read(file(text, 2000))).sources.compactionCount).toBe(3);
+  });
+
+  test('a line appended after the listing is not counted twice', async () => {
+    const listed = bigSession();
+    const grown = `${listed}${compaction('c3')}\n`;
+    const files = new Map([[PATH, listed]]);
+    // the file grows between the lister's stat and the grep
+    const { exec } = fakeExec(files, { beforeGrep: () => files.set(PATH, grown) });
+    const reader = createSessionReader({ exec });
+
+    expect((await reader.read(file(listed))).sources.compactionCount).toBe(2);
+    expect((await reader.read(file(grown, 2000))).sources.compactionCount).toBe(3);
+  });
+
+  test('a failed incremental read recounts from the start', async () => {
+    let text = bigSession();
+    const files = new Map([[PATH, text]]);
+    const faults = {};
+    const { exec, calls } = fakeExec(files, faults);
+    const reader = createSessionReader({ exec });
+    await reader.read(file(text));
+
+    text += `${compaction('c3')}\n`;
+    files.set(PATH, text);
+    faults.failIncremental = true;
+    const failed = await reader.read(file(text, 2000));
+    expect(failed.sources.compactionCount).toBe(null);
+    expect(readStats('omp', failed, NOW).autocompactions).toBe(NA);
+
+    faults.failIncremental = false;
+    const greps = () => calls.filter((call) => call.command === 'grep').length;
+    const before = greps();
+    expect((await reader.read(file(text, 3000))).sources.compactionCount).toBe(3);
+    expect(greps()).toBe(before + 1);
   });
 
   test('a half-written line is counted once it is whole', async () => {
