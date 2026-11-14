@@ -110,10 +110,13 @@ function cacheExpiry({ assistants }, now) {
 }
 
 // Compactions recorded in the session (docs/omp-session-format.md, D8 (a)): omp does not
-// mark automatic ones, so this counts all `compaction` entries. Counting needs the whole
-// file; a tail window can hold only some of them, so it reads n/a, never 0.
-function autocompactions({ fromStart, compactions }) {
-  return fromStart ? { autocompactions: compactions } : {};
+// mark automatic ones, so this counts all `compaction` entries. Counting from the text needs
+// the whole file; a tail window can hold only some of them, so the caller that reads a tail
+// counts the file another way and hands the number in as `sources.compactionCount`. With
+// neither, it reads n/a, never 0.
+function autocompactions({ fromStart, compactions, sources }) {
+  if (fromStart) return { autocompactions: compactions };
+  return isNumber(sources.compactionCount) ? { autocompactions: sources.compactionCount } : {};
 }
 
 // Window of the latest assistant message's model, from omp's model catalogue (D8 (b)).
@@ -241,11 +244,12 @@ const FIGURES = [
   premium,
 ];
 
-// `input` is the jsonl text, or `{ text, sources }` where `sources` holds the two omp files
-// the context figures need, already read by the caller (the mod reads them asynchronously):
-// `catalogue`, the model entries (`{ id, contextWindow }`) of the session's provider from
-// omp's newest catalogue row, and `compaction`, the `compaction` block of omp's config
-// (`{}` when it has none). A source that could not be read is null or absent.
+// `input` is the jsonl text, or `{ text, sources }` where `sources` holds what the caller
+// read besides the text, already read (the mod reads them asynchronously): `catalogue`, the
+// model entries (`{ id, contextWindow }`) of the session's provider from omp's newest
+// catalogue row; `compaction`, the `compaction` block of omp's config (`{}` when it has
+// none); and `compactionCount`, the number of `compaction` entries in the whole file when
+// the text is only its tail. A source that could not be read is null or absent.
 export const ompProvider = {
   readStats(input, now) {
     const { text, sources } = typeof input === 'string' ? { text: input } : input;
