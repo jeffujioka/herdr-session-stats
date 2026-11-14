@@ -52,6 +52,8 @@ import { ompProvider } from './omp.js';
 import { createOmpSessions } from './omp-sources.js';
 import { opencodeProvider } from './opencode.js';
 import { createOpencodeSessions } from './opencode-sources.js';
+import { claudeProvider } from './claude.js';
+import { createClaudeSessions } from './claude-sources.js';
 
 export const NA = 'n/a';
 
@@ -86,6 +88,7 @@ export function registerProvider(harness, provider) {
 // Built-in providers. One line each; omp.js does not import this file, so there is no cycle.
 registerProvider('omp', { ...ompProvider, createSessions: createOmpSessions });
 registerProvider('opencode', { ...opencodeProvider, createSessions: createOpencodeSessions });
+registerProvider('claude-code', { ...claudeProvider, createSessions: createClaudeSessions });
 
 // Always returns every field: the provider's value where it gave one, else n/a.
 export function readStats(harness, input, now) {
