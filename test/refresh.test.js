@@ -38,6 +38,7 @@ function fakeExec(files, faults = {}) {
     const call = { command, args, options, served: 0 };
     calls.push(call);
     if (command === 'grep') faults.beforeGrep?.();
+    if (command === 'grep' && 'grepCode' in faults) return { code: faults.grepCode, stdout: '', stderr: '' };
     const path = args.at(-1);
     const text = files.get(path);
     if (text === undefined) return { code: 1, stdout: '', stderr: `${command}: ${path}: No such file or directory` };
@@ -150,6 +151,22 @@ describe('refresh', () => {
     const before = greps();
     expect((await reader.read(file(text, 3000))).sources.compactionCount).toBe(3);
     expect(greps()).toBe(before + 1);
+  });
+
+  test('a grep that did not exit is not a count of 0', async () => {
+    const text = bigSession();
+    const faults = { grepCode: null }; // a process that was signalled has no exit code
+    const { exec, calls } = fakeExec(new Map([[PATH, text]]), faults);
+    const reader = createSessionReader({ exec });
+
+    const failed = await reader.read(file(text));
+    expect(failed.sources.compactionCount).toBe(null);
+    expect(readStats('omp', failed, NOW).autocompactions).toBe(NA);
+
+    // nothing was cached: the next refresh counts the file again
+    delete faults.grepCode;
+    expect((await reader.read(file(text))).sources.compactionCount).toBe(2);
+    expect(calls.filter((call) => call.command === 'grep')).toHaveLength(2);
   });
 
   test('a half-written line is counted once it is whole', async () => {

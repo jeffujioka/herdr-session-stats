@@ -33,8 +33,9 @@ export function createSessionReader({ exec }) {
   // a line appended between the listing and the pass lies past it and is counted by the
   // next incremental read, not twice. Afterwards each refresh reads only what was appended
   // past `scannedSize`, and advances it up to the last newline so a half-written line is
-  // counted once it is whole. A smaller file than scanned was replaced, so the count starts
-  // over.
+  // counted once it is whole. A match that starts below the size but is cut by it (a line
+  // being written) is counted here, and the incremental read, which starts inside it, does not
+  // see it again. A smaller file than scanned was replaced, so the count starts over.
   async function countCompactions({ path, size }) {
     if (size <= TAIL_BYTES) {
       counted.delete(path);
@@ -53,9 +54,10 @@ export function createSessionReader({ exec }) {
       seen.scannedSize += encoder.encode(whole).length;
       return seen.count;
     }
-    // grep exits 1 for no match, with nothing printed; 2 is an error
+    // grep exits 1 for no match, with nothing printed; any other code (2, or none or a
+    // negative one for a process that was signalled) is a failed count
     const { code, stdout } = await exec('grep', ['-b', '-o', '-F', COMPACTION_ENTRY, '--', path]);
-    if (code > 1) return null;
+    if (code !== 0 && code !== 1) return null;
     const count = stdout.split('\n').filter((line) => line && Number.parseInt(line, 10) < size).length;
     counted.set(path, { count, scannedSize: size });
     return count;
