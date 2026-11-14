@@ -5,7 +5,7 @@
 import { View, div } from "gpui-kit";
 import { v_flex, h_flex } from "gpui-base";
 import { exec, home, panes, readTextFile, spaces, theme } from "herdr";
-import { createCardBuilder } from "./cards.js";
+import { agentPanes, createCardBuilder } from "./cards.js";
 import { describeCard } from "./format.js";
 import { REFRESH_INTERVAL_MS } from "./refresh.js";
 
@@ -50,8 +50,9 @@ function card(c, t) {
 export default class SessionStats extends View {
   init(_props, cx) {
     this.cards = [];
-    this.loaded = false;
+    this.agents = null; // agent panes at the last tick, null before the first
     this.problem = null;
+    this.lastError = null;
     this.builder = createCardBuilder({ exec, readTextFile, home: home() });
     cx.timer.every(REFRESH_INTERVAL_MS, (cx) => this.refresh(cx));
     this.refresh(cx);
@@ -59,31 +60,39 @@ export default class SessionStats extends View {
 
   // Every tick starts a refresh. A card shows as soon as its own pane is resolved, so a slow
   // machine holds back only its own cards; the builder does not restart a pane that an earlier
-  // refresh is still resolving.
+  // refresh is still resolving, and a call that starts nothing resolves at once (the cards
+  // arrive through the call that started the pane).
   refresh(cx) {
     cx.spawn(async (cx) => {
       let panes;
       try {
         panes = livePanes();
       } catch (error) {
-        console.log(`herdr-session-stats: cannot read panes: ${error?.message ?? error}`);
+        // once per distinct failure, not at every tick
+        const message = String(error?.message ?? error);
+        if (message !== this.lastError) console.log(`herdr-session-stats: cannot read panes: ${message}`);
+        this.lastError = message;
         this.problem = "Cannot read panes";
         cx.notify();
         return;
       }
+      this.lastError = null;
       this.problem = null;
-      this.cards = await this.builder.build(panes, Date.now(), (cards) => {
+      this.agents = agentPanes(panes).length;
+      await this.builder.build(panes, Date.now(), (cards) => {
         this.cards = cards;
         cx.notify();
       });
-      this.loaded = true;
       cx.notify();
     });
   }
 
   render() {
     const t = theme();
-    const note = this.problem ?? (this.cards.length === 0 ? (this.loaded ? "No agents" : "Loading…") : null);
+    // No card yet is "No agents" only when herdr reports no agent pane; with agent panes it is
+    // loading, however long a slow machine takes.
+    const empty = this.agents === 0 ? "No agents" : "Loading…";
+    const note = this.problem ?? (this.cards.length === 0 ? empty : null);
     return v_flex()
       .id("session-stats")
       .size_full()
