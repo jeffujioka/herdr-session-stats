@@ -27,23 +27,32 @@ function bigSession() {
 }
 
 // In-memory stand-in with the exact signature of herdr's `exec(command, args, options)`:
-// `tail -c N path` and `grep -c pattern path` over a map of path -> text, like the real
-// programs; anything else rejects, as a program that cannot start does. Keeps every call.
+// `tail -c N|+N -- path` and `grep -c -F pattern -- path` over a map of path -> text, like the
+// real programs; anything else rejects, as a program that cannot start does. Keeps every call
+// and the bytes it served: what a tail returns, or all a grep had to scan.
 function fakeExec(files) {
   const calls = [];
   async function exec(command, args = [], options) {
-    calls.push({ command, args, options });
+    const call = { command, args, options, served: 0 };
+    calls.push(call);
     const path = args.at(-1);
     const text = files.get(path);
     if (text === undefined) return { code: 1, stdout: '', stderr: `${command}: ${path}: No such file or directory` };
-    if (command === 'tail' && args[0] === '-c') return { code: 0, stdout: text.slice(-Number(args[1])), stderr: '' };
+    if (command === 'tail' && args[0] === '-c') {
+      const from = args[1].startsWith('+') ? Number(args[1].slice(1)) - 1 : text.length - Number(args[1]);
+      const stdout = text.slice(Math.max(0, from));
+      call.served = stdout.length;
+      return { code: 0, stdout, stderr: '' };
+    }
     if (command === 'grep' && args[0] === '-c') {
-      const count = text.split('\n').filter((line) => line.includes(args.at(-2))).length;
+      call.served = text.length;
+      const count = text.split('\n').filter((line) => line.includes(args.at(-3))).length;
       return { code: count ? 0 : 1, stdout: `${count}\n`, stderr: '' };
     }
     throw new Error(`cannot start ${command}`);
   }
-  return { exec, calls };
+  const served = (from = 0) => calls.slice(from).reduce((sum, call) => sum + call.served, 0);
+  return { exec, calls, served };
 }
 
 const file = (text, mtimeMs = 1000) => ({ path: PATH, mtimeMs, size: text.length });
@@ -54,50 +63,93 @@ describe('refresh', () => {
   });
 
   test('reads only the tail window', async () => {
-    const text = bigSession();
-    const { exec, calls } = fakeExec(new Map([[PATH, text]]));
-    const input = await createSessionReader({ exec }).read(file(text));
-    const stats = readStats('omp', input, NOW);
+    let text = bigSession();
+    const files = new Map([[PATH, text]]);
+    const { exec, calls, served } = fakeExec(files);
+    const reader = createSessionReader({ exec });
 
+    // first refresh: the tail, and the one count over the whole file
+    const input = await reader.read(file(text));
+    const stats = readStats('omp', input, NOW);
     expect(text.length).toBeGreaterThan(TAIL_BYTES * 3);
     expect(input.text.length).toBeLessThanOrEqual(TAIL_BYTES);
     expect(text.endsWith(input.text)).toBe(true);
-    const tails = calls.filter((call) => call.command === 'tail');
-    expect(tails).toEqual([{ command: 'tail', args: ['-c', String(TAIL_BYTES), PATH], options: undefined }]);
-    // the only other read counts matching lines and hands back the number, not the file
-    expect(calls.filter((call) => call.command !== 'tail').map((call) => call.command)).toEqual(['grep']);
-    // figures come from the tail; the count of both compactions from the cheap count
+    expect(calls[0]).toMatchObject({ command: 'tail', args: ['-c', String(TAIL_BYTES), '--', PATH] });
     expect(stats.model).toBe('tail-model');
     expect(stats.autocompactions).toBe(2);
+
+    // unchanged file: only the tail is served, nothing is counted again
+    let mark = calls.length;
+    expect((await reader.read(file(text))).sources.compactionCount).toBe(2);
+    expect(served(mark)).toBeLessThanOrEqual(TAIL_BYTES);
+
+    // appended lines (one holding a compaction): at most the tail plus what was appended
+    const appended = `${compaction('c3')}\n${message('assistant', 53)}\n`;
+    text += appended;
+    files.set(PATH, text);
+    mark = calls.length;
+    const after = await reader.read(file(text, 2000));
+    expect(served(mark)).toBeLessThanOrEqual(TAIL_BYTES + appended.length);
+    expect(readStats('omp', after, NOW).autocompactions).toBe(3);
   });
 
-  test('counts compactions again only when the file changed', async () => {
-    const text = bigSession();
-    const { exec, calls } = fakeExec(new Map([[PATH, text]]));
+  test('a half-written line is counted once it is whole', async () => {
+    let text = bigSession();
+    const files = new Map([[PATH, text]]);
+    const { exec } = fakeExec(files);
     const reader = createSessionReader({ exec });
-    const greps = () => calls.filter((call) => call.command === 'grep').length;
-
     await reader.read(file(text));
-    await reader.read(file(text));
-    expect(greps()).toBe(1);
 
-    await reader.read(file(text, 2000));
-    expect(greps()).toBe(2);
+    const whole = `${compaction('c3')}\n`;
+    text += whole.slice(0, 20);
+    files.set(PATH, text);
+    expect((await reader.read(file(text, 2000))).sources.compactionCount).toBe(2);
+    // the cut line already holds the matched text; it must not count before its newline
+    text += whole.slice(20);
+    files.set(PATH, text);
+    expect((await reader.read(file(text, 3000))).sources.compactionCount).toBe(3);
+  });
+
+  test('a replaced, smaller file is counted from its start', async () => {
+    const text = bigSession();
+    const files = new Map([[PATH, text]]);
+    const { exec } = fakeExec(files);
+    const reader = createSessionReader({ exec });
+    await reader.read(file(text));
+
+    const replaced = `${message('user', 2)}\n`.repeat(200);
+    expect(replaced.length).toBeGreaterThan(TAIL_BYTES);
+    expect(replaced.length).toBeLessThan(text.length);
+    files.set(PATH, replaced);
+    expect((await reader.read(file(replaced, 5000))).sources.compactionCount).toBe(0);
+  });
+
+  test('a file within the tail window is not counted', async () => {
+    const text = `${entry({ type: 'session', id: 's' })}\n${compaction('c1')}\n${message('assistant', 1)}\n`;
+    const { exec, calls } = fakeExec(new Map([[PATH, text]]));
+    const input = await createSessionReader({ exec }).read(file(text));
+
+    expect(calls.map((call) => call.command)).toEqual(['tail']);
+    expect(readStats('omp', input, NOW).autocompactions).toBe(1);
   });
 
   test('no writes', async () => {
-    const text = bigSession();
+    let text = bigSession();
     const files = new Map([[PATH, text]]);
     const { exec, calls } = fakeExec(files);
-    await createSessionReader({ exec }).read(file(text));
+    const reader = createSessionReader({ exec });
+    await reader.read(file(text));
+    text += `${compaction('c3')}\n`;
+    files.set(PATH, text);
+    await reader.read(file(text, 2000));
 
-    expect(calls.length).toBeGreaterThan(0);
+    expect(calls.length).toBeGreaterThan(2);
     for (const { command, args } of calls) {
-      expect(['tail', 'grep', 'stat', 'ls']).toContain(command);
-      // no redirection, no in-place or output flag
+      expect(['tail', 'grep']).toContain(command);
+      // no redirection, no in-place or output flag; the path follows `--`
       expect(args.filter((arg) => /^\d*>|^-i|^--in-place|^--output/.test(arg))).toEqual([]);
+      expect(args.at(-2)).toBe('--');
     }
-    expect(files.get(PATH)).toBe(text);
   });
 
   test('an unreadable file reads n/a', async () => {
