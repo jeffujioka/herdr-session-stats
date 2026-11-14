@@ -33,7 +33,11 @@ function parseSession(text) {
   // top of the file; a tail window does not.
   const fromStart = entries.some((e) => e.type === 'session');
   const compactions = entries.filter((e) => e.type === 'compaction').length;
-  return { messages, assistants, fromStart, compactions };
+  // Level of the latest `thinking_level_change` entry; a tail window may not hold one.
+  const thinkingLevel = entries
+    .filter((e) => e.type === 'thinking_level_change' && typeof e.thinkingLevel === 'string')
+    .at(-1)?.thinkingLevel;
+  return { messages, assistants, fromStart, compactions, thinkingLevel };
 }
 
 const isNumber = (value) => typeof value === 'number' && Number.isFinite(value);
@@ -182,7 +186,60 @@ function context({ assistants, sources }) {
   return figures;
 }
 
-const FIGURES = [model, duration, tokens, cost, cacheRate, cacheTurns, cacheExpiry, autocompactions, context];
+// Burn rate is derived from the session's own duration, cost and token figures; a session
+// that has not lasted (duration 0) or lacks the input reads n/a.
+function burnRate(session) {
+  const { durationMs } = duration(session);
+  if (!(durationMs > 0)) return {};
+  const { costUsd } = cost(session);
+  const { totalTokens } = tokens(session);
+  const figures = {};
+  if (costUsd !== undefined) figures.burnCostPerHour = costUsd / (durationMs / 3600000);
+  if (totalTokens !== undefined) figures.burnTokensPerMin = totalTokens / (durationMs / 60000);
+  return figures;
+}
+
+// Time since the last message entry, by its ISO timestamp, like the duration.
+function sinceActivity({ messages }, now) {
+  const last = Date.parse(messages.at(-1)?.timestamp);
+  return isNumber(last) && isNumber(now) ? { sinceActivityMs: now - last } : {};
+}
+
+// Last turn: the last assistant message minus the user message that began its turn (the
+// nearest user message before it), both by their entries' ISO timestamps.
+function latency({ messages }) {
+  const reply = messages.findLastIndex((e) => e.message.role === 'assistant');
+  const began = messages.findLastIndex((e, i) => i < reply && e.message.role === 'user');
+  if (reply < 0 || began < 0) return {};
+  const ms = Date.parse(messages[reply].timestamp) - Date.parse(messages[began].timestamp);
+  return isNumber(ms) ? { latencyMs: ms } : {};
+}
+
+function thinking({ thinkingLevel }) {
+  return thinkingLevel ? { thinkingLevel } : {};
+}
+
+function premium(session) {
+  const premiumRequests = sumAssistants(session, (m) => m.usage?.premiumRequests);
+  return premiumRequests === undefined ? {} : { premiumRequests };
+}
+
+const FIGURES = [
+  model,
+  duration,
+  tokens,
+  cost,
+  cacheRate,
+  cacheTurns,
+  cacheExpiry,
+  autocompactions,
+  context,
+  burnRate,
+  sinceActivity,
+  latency,
+  thinking,
+  premium,
+];
 
 // `input` is the jsonl text, or `{ text, sources }` where `sources` holds the two omp files
 // the context figures need, already read by the caller (the mod reads them asynchronously):
