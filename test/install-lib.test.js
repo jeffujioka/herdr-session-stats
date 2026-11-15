@@ -2,6 +2,7 @@ import { afterEach, beforeEach, describe, expect, test } from 'bun:test';
 import { mkdirSync, mkdtempSync, readFileSync, readdirSync, rmSync, statSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
+import { DRAWER_COMMAND } from '../src/adapt.js';
 import { activeLayoutFrom, bindingsFor, install, MOD_NAME, mergeKeys, PRESENTATIONS } from '../src/install-lib.js';
 import { nodeFs } from '../scripts/install.js';
 
@@ -301,11 +302,13 @@ describe('three presentations of the one mod', () => {
     // `layout.toggle` cannot find a floating block, so the drawer's key is the mod's own command,
     // which the drawer copy handles; bound in the clone's section only
     const key = 'f8';
-    const action = `${MOD_NAME}.drawer`;
+    const action = `${MOD_NAME}.${DRAWER_COMMAND}`;
     expect(keys['layout:main-stats'][key]).toBe(action);
     expect(keys.global[key]).toBeUndefined();
     expect(JSON.stringify(keys)).not.toContain('layout.toggle:session-stats-drawer');
     expect(report.keys.added).toContainEqual(expect.objectContaining({ presentation: 'drawer', key, section: 'layout:main-stats', action }));
+    // a fresh install replaced nothing
+    expect(report.keys.added.every((b) => b.replaced === undefined)).toBe(true);
     expect(report.keys.conflicts).toEqual([]);
 
     // a home installed before has this mod's earlier binding on the key: it is upgraded in
@@ -315,7 +318,7 @@ describe('three presentations of the one mod', () => {
     put(join(home, 'keys.json'), `${JSON.stringify(old, null, 2)}\n`);
     const upgraded = run();
     expect(readJson(join(home, 'keys.json'))['layout:main-stats'][key]).toBe(action);
-    expect(upgraded.keys.added).toEqual([expect.objectContaining({ presentation: 'drawer', key, action })]);
+    expect(upgraded.keys.added).toEqual([expect.objectContaining({ presentation: 'drawer', key, action, replaced: 'layout.toggle:session-stats-drawer' })]);
     expect(upgraded.keys.conflicts).toEqual([]);
     const settled = snapshot(home);
     expect(run().keys).toEqual({ added: [], copied: [], conflicts: [] });

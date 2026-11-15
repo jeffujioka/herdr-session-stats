@@ -61,7 +61,9 @@ function main() {
   console.log(`mod: ${report.mod.written.length} file(s) written, ${report.mod.removed.length} removed`);
   console.log(`layout ${report.layout.name}: ${report.layout.created ? 'created' : report.layout.changed ? 'completed' : 'already in place'}`);
   if (report.keys.copied.length > 0) console.log(`${report.keys.copied.length} key(s) of the layout you use copied into layout:${report.layout.name}`);
-  for (const k of report.keys.added) console.log(`key ${k.key} (${k.section}): ${k.action}`);
+  for (const k of report.keys.added) {
+    console.log(`key ${k.key} (${k.section}): ${k.action}${k.replaced ? ` (replaces ${k.replaced})` : ''}`);
+  }
   for (const c of report.keys.conflicts) {
     console.log(`not bound: ${c.key} is taken in ${c.section} by ${JSON.stringify(c.taken)}; the ${c.presentation} has no key`);
   }

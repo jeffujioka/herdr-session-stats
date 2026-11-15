@@ -4,17 +4,11 @@
 
 import { View, div } from "gpui-kit";
 import { v_flex, h_flex } from "gpui-base";
-import { exec, home, nextCommand, panes, placement, props, readTextFile, setShared, shared, spaces, theme } from "herdr";
-import { adapt } from "./adapt.js";
+import { exec, home, nextCommand, panes, placement, props, readTextFile, spaces, theme } from "herdr";
+import { adapt, drawerHidden, nextDrawerState } from "./adapt.js";
 import { agentPanes, createCardBuilder, panesOfActiveSpace } from "./cards.js";
 import { describeCard, formatCost, formatPercent } from "./format.js";
 import { REFRESH_INTERVAL_MS } from "./refresh.js";
-
-// The drawer's key is bound to the mod's own command `drawer` (`layout.toggle` cannot find a
-// floating block); the drawer copy keeps whether it is shown in this shared flag, false (hidden)
-// until the first command.
-const DRAWER_COMMAND = "drawer";
-const DRAWER_SHOWN = "session-stats.drawer";
 
 // The panes of the shown space as `panes()` reports them, each with the machine of its space:
 // the pane's tab names the space it is in, and the space the machine.
@@ -97,6 +91,10 @@ export default class SessionStats extends View {
     this.agents = null; // agent panes at the last tick, null before the first
     this.problem = null;
     this.lastError = null;
+    // whether this copy floats (it is the drawer) does not change for its lifetime; the drawer
+    // starts hidden, and the state is this copy's own, so a restart or a layout switch hides it
+    this.floats = placement() !== null;
+    this.shown = false;
     this.builder = createCardBuilder({ exec, readTextFile, home: home() });
     cx.timer.every(REFRESH_INTERVAL_MS, (cx) => this.refresh(cx));
     this.refresh(cx);
@@ -104,13 +102,12 @@ export default class SessionStats extends View {
   }
 
   // The key commands of this mod. The drawer's key (`herdr-session-stats.drawer`) is delivered
-  // to every shown copy; only the copy that floats, the drawer, reacts, so the flag flips once
-  // however many copies hear it. The flag is shared, so setting it redraws the drawer.
+  // to every shown copy; only the copy that floats, the drawer, reacts (src/adapt.js).
   listen(cx) {
     cx.spawn(async (cx) => {
       for (;;) {
         const command = await nextCommand();
-        if (command === DRAWER_COMMAND && placement() !== null) setShared(DRAWER_SHOWN, shared(DRAWER_SHOWN) !== true);
+        this.shown = nextDrawerState(command, this.floats, this.shown);
         cx.notify();
       }
     });
@@ -149,9 +146,8 @@ export default class SessionStats extends View {
     const t = theme();
     const floating = placement();
     // The drawer is the copy that floats. It starts hidden and draws nothing until its key's
-    // command shows it (AGENTS.md: a floating block sizes to its content, so render nothing to
-    // hide it).
-    if (floating !== null && shared(DRAWER_SHOWN) !== true) return div();
+    // command shows it (src/adapt.js).
+    if (drawerHidden(this.floats, this.shown)) return div();
     // No card yet is "No agents" only when herdr reports no agent pane; with agent panes it is
     // loading, however long a slow machine takes.
     const empty = this.agents === 0 ? "No agents" : "Loading…";
