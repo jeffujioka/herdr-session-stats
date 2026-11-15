@@ -5,6 +5,12 @@
 // through `cwd`, so no path is an argument; neither writes, and no shell string or
 // redirection is used.
 
+// The URL of a remote without the credentials of an http(s) or ftp(s) URL: the userinfo
+// (`user:token@`, `token@`) is replaced by `***`, so a secret never reaches a card or a log.
+// The userinfo ends at the last `@` of the authority. A bare user name of an scp-style or
+// ssh:// remote (`git@host:org/repo.git`) is not a secret and stays, as does a URL without one.
+const maskCredentials = (url) => url.replace(/^((?:https?|ftps?):\/\/)[^/?#]*@/i, '$1***@');
+
 // One git fact: the first line git prints, or null when git fails (not a repository, no
 // origin remote), prints nothing (a detached HEAD has no branch), or cannot be run at all
 // (no such folder, the machine is unreachable). A card shows no line for a null.
@@ -30,5 +36,5 @@ export async function readGit({ exec }, { cwd, on }) {
     ask(exec, ['branch', '--show-current'], options),
     ask(exec, ['remote', 'get-url', 'origin'], options),
   ]);
-  return { branch, origin };
+  return { branch, origin: origin === null ? null : maskCredentials(origin) };
 }
