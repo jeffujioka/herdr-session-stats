@@ -125,22 +125,22 @@ export function createCardBuilder({ exec, readTextFile, home }) {
   // machine that cannot be reached, or a folder with no session. `group` is the pane's
   // group of this build (`groupOf`): where several panes share a folder and the provider can
   // `list` it, the group's files are listed once and shared out among them by their titles
-  // (session-link.js); otherwise the pane links to the newest file.
+  // (session-link.js); otherwise, or when the listing failed, the pane links to the newest file.
   async function link(pane, group) {
     try {
       const hook = sessionsOf(pane.app);
       if (!hook || !pane.cwd) return null;
       const { os, home: machineHome } = await placeOn(pane.machine);
       const where = { machine: pane.machine, cwd: pane.cwd, home: machineHome, os };
-      let file;
+      let shared = null;
       if (group.panes.length > 1 && hook.list) {
         group.shared ??= hook
           .list({ ...where, limit: group.panes.length })
-          .then((files) => shareSessions(files, group.panes.map((member) => member.title)));
-        file = (await group.shared)[group.panes.indexOf(pane)];
-      } else {
-        file = await hook.link(where);
+          .then((files) => shareSessions(files, group.panes.map((member) => member.title)))
+          .catch(() => null);
+        shared = await group.shared;
       }
+      const file = shared ? shared[group.panes.indexOf(pane)] : await hook.link(where);
       return file ? { file, home: machineHome } : null;
     } catch {
       return null;
