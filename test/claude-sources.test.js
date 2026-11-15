@@ -4,34 +4,28 @@ import { createCardBuilder } from '../src/cards.js';
 import { TAIL_BYTES } from '../src/refresh.js';
 import { sessionDirSlug } from '../src/providers/claude-sources.js';
 import { NA } from '../src/providers/index.js';
+import { fakeExec as fakeFiles } from './helpers/fake-exec.js';
 
 const BASIC = readFileSync(new URL('./fixtures/claude/basic.jsonl', import.meta.url), 'utf8');
 const HOME = '/Users/me';
 const NOW = Date.parse('2026-09-07T20:22:00.000Z');
 const DIR = `${HOME}/.claude/projects/-Users-me-work-app-v1-2`;
 
-// Stand-in with the exact signature of herdr's `exec(command, args, options)` for the read-only
-// programs a Claude Code card runs: `uname`, `find ... stat` over `DIR`, `tail -c N -- path`
-// and `dd if=path bs=B skip=K count=1`. `ddFails` makes every dd exit 1.
+// Stand-in with the exact signature of herdr's `exec(command, args, options)` for the programs
+// a Claude Code card runs: `uname` and `find ... stat` over `DIR` here, the reads of the
+// session files (`tail`, `dd`) by the shared fake of test/helpers/fake-exec.js. `ddFails`
+// makes every dd exit 1.
 function fakeExec(files, { ddFails = false } = {}) {
   const calls = [];
+  const reads = fakeFiles(new Map(files.map((f) => [`${DIR}/${f.name}`, f.text])), { fail: (call) => ddFails && call.command === 'dd' });
   async function exec(command, args = [], options = {}) {
     calls.push({ command, args, options });
-    const ok = (stdout, stderr = '') => ({ code: 0, stdout, stderr });
-    if (command === 'uname') return ok('Darwin\n');
+    if (command === 'uname') return { code: 0, stdout: 'Darwin\n', stderr: '' };
     if (command === 'find') {
       if (args[0] !== DIR) return { code: 1, stdout: '', stderr: 'No such file or directory' };
-      return ok(files.map((f) => `${Math.floor(f.mtimeMs / 1000)} ${f.size} ${DIR}/${f.name}`).join('\n') + '\n');
+      return { code: 0, stdout: files.map((f) => `${Math.floor(f.mtimeMs / 1000)} ${f.size} ${DIR}/${f.name}`).join('\n') + '\n', stderr: '' };
     }
-    if (command === 'tail') return ok(files.find((f) => `${DIR}/${f.name}` === args.at(-1)).text.slice(-Number(args[1])));
-    if (command === 'dd') {
-      if (ddFails) return { code: 1, stdout: '', stderr: 'dd: failed' };
-      const bytes = Buffer.from(files.find((f) => `${DIR}/${f.name}` === args[0].slice(3)).text);
-      const size = Number(args[1].slice(3));
-      const skip = Number(args[2].slice(5));
-      const part = bytes.subarray(skip * size, (skip + 1) * size);
-      return ok(part.toString('utf8'), `${part.length} bytes copied\n`);
-    }
+    if (command === 'tail' || command === 'dd') return reads.exec(command, args, options);
     return { code: 128, stdout: '', stderr: 'not a git repository' };
   }
   return { exec, calls };
