@@ -1,12 +1,19 @@
 // Provider registry: the one seam between a harness's session files and the card.
 //
 // A provider is `{ readStats(input, now) }`, synchronous, and returns a partial stats object.
-// `input` is whatever the provider reads from (omp: the jsonl text of the session, or
-// `{ text, sources }` with the omp files already read by the caller; opencode: `{ messages,
-// compactions }`, the rows of the session read from its database); the registry does not look
-// inside it. A provider never reads a file itself: the mod
-// does its I/O asynchronously and hands plain values in. `now` is epoch milliseconds; a figure
-// measured from the present (cacheLeftMs) reads it, the others ignore it.
+// `input` is whatever the provider reads from (omp and Claude Code: the jsonl text of the
+// session, or `{ text, sources, state }` with the files already read by the caller, `text`
+// being the tail window of a large file and `state` the provider's accumulator over the whole
+// file; opencode: `{ messages, compactions }`, the rows of the session read from its
+// database); the registry does not look inside it. A provider never reads a file itself: the
+// mod does its I/O asynchronously and hands plain values in. `now` is epoch milliseconds; a
+// figure measured from the present (cacheLeftMs) reads it, the others ignore it.
+//
+// A provider that reads a jsonl file also carries `fold(state, entries) -> state`, the
+// accumulator of the figures that need the whole file: it adds parsed entries to `state`
+// (undefined starts a new one), so the state is the same whether a file is folded at once or
+// in pieces, which is how src/refresh.js reads a file larger than the tail window (once in
+// chunks, then only what was appended). Its `createSessions` hands the reader this `fold`.
 //
 // A provider may also carry `createSessions({ execOn, readTextOn })`, the hook that finds its
 // sessions and reads their plain-value sources; it lives in the provider's own

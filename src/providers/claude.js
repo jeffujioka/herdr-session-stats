@@ -4,27 +4,15 @@
 // estimates one, and there is no price table.
 //
 // Pure: no herdr, no file access, no runtime-specific API, so the mod can bundle it. `input`
-// is the jsonl text of the session or `{ text, sources }` (see `claudeProvider`).
+// is the jsonl text of the session or `{ text, sources, state }` (see `claudeProvider`).
 //
-// Structure as in omp.js: `parseSession` turns the text into one `session` value, and each
-// entry of `FIGURES` is a function `(session, now, sources) => partial stats`.
+// Structure as in omp.js: the session totals come from an accumulator, `fold(state, entries)`,
+// that the caller can build in pieces over a file larger than the tail window; each entry of
+// `TOTALS` is a function `(state) => partial stats`. The figures about the end of the file come
+// from the text (the tail), which `parseTail` turns into one `session` value; each entry of
+// `LATEST` is a function `(session, now) => partial stats`.
 
-// Lines that are not whole JSON (a tail window can start mid-line) are skipped.
-function parseEntries(text) {
-  const entries = [];
-  for (const line of text.split('\n')) {
-    if (!line.trim()) continue;
-    try {
-      const entry = JSON.parse(line);
-      if (entry && typeof entry === 'object') entries.push(entry);
-    } catch {
-      // partial or damaged line: carries no figure
-    }
-  }
-  return entries;
-}
-
-const isNumber = (value) => typeof value === 'number' && Number.isFinite(value);
+import { add, isNumber, parseEntries, tally } from './jsonl.js';
 
 // A user entry that carries a tool's result continues a turn; any other (not meta) one starts it.
 const isPrompt = ({ message, isMeta }) =>
@@ -33,47 +21,6 @@ const isPrompt = ({ message, isMeta }) =>
 // What Claude Code writes in place of an API reply it never got (an error, an interruption);
 // its usage is all zeros and it is no turn.
 const SYNTHETIC_MODEL = '<synthetic>';
-
-function parseSession(text) {
-  // user and assistant entries, with the entry's own ISO timestamp as epoch ms
-  const messages = [];
-  // API responses, once each: Claude Code writes a response as one entry per content block,
-  // every one with the response's `message.id` and the same usage. The later entry replaces
-  // the earlier, so a response is dated by its last block.
-  const assistants = [];
-  const slots = new Map();
-  let logged;
-  let compactions = 0;
-  for (const entry of parseEntries(text)) {
-    const { message } = entry;
-    const time = Date.parse(entry.timestamp);
-    if ((entry.type === 'user' || entry.type === 'assistant') && message && typeof message === 'object' && isNumber(time)) {
-      messages.push({ role: entry.type, time, prompt: entry.type === 'user' && isPrompt(entry) });
-      if (entry.type === 'assistant' && message.model !== SYNTHETIC_MODEL) {
-        const response = { message, time };
-        const slot = typeof message.id === 'string' ? slots.get(message.id) : undefined;
-        if (slot === undefined) {
-          if (typeof message.id === 'string') slots.set(message.id, assistants.length);
-          assistants.push(response);
-        } else {
-          assistants[slot] = response;
-        }
-        if (logged) logged.stale = true;
-      }
-    } else if (entry.type === 'cost-state') {
-      logged = { usd: entry.totalCostUSD, stale: false };
-    } else if (entry.type === 'system' && entry.subtype === 'compact_boundary' && entry.compactMetadata?.trigger === 'auto') {
-      compactions += 1;
-    }
-  }
-  return { messages, assistants, logged, compactions };
-}
-
-// Sum of `pick(assistant message)` over the responses that have it; undefined when none has.
-function sumAssistants(session, pick) {
-  const values = session.assistants.map(({ message }) => pick(message)).filter(isNumber);
-  return values.length ? values.reduce((a, b) => a + b, 0) : undefined;
-}
 
 const inputTokens = (m) => m.usage?.input_tokens;
 const outputTokens = (m) => m.usage?.output_tokens;
@@ -86,39 +33,135 @@ function responseTokens(m) {
   return counts.every(isNumber) ? counts.reduce((a, b) => a + b, 0) : undefined;
 }
 
+// A fresh accumulator.
+function emptyState() {
+  return {
+    // timestamps (epoch ms) of the first and the latest user or assistant entry
+    firstMessage: undefined,
+    lastMessage: undefined,
+    // API responses, once each: Claude Code writes a response as one entry per content block,
+    // every one with the response's `message.id` and the same usage. A later entry replaces the
+    // earlier, so `responses` keeps what each id added to the tallies, to take it back.
+    responses: new Map(),
+    totalTokens: tally(),
+    input: tally(),
+    cacheRead: tally(),
+    cacheWrite: tally(),
+    // responses that logged a cache read, and those whose cache read was above 0
+    cacheReads: tally(),
+    cacheHits: tally(),
+    // the latest `cost-state` entry: { usd, stale }, stale once a response came after it
+    logged: undefined,
+    compactions: 0,
+    // a `compact_boundary` whose trigger is neither `manual` nor `auto` was seen: it may be an
+    // automatic compaction under a name this reader does not know, so the count is unknown
+    unknownTrigger: false,
+  };
+}
+
+// What a response adds to the tallies: the values of its message that are numbers.
+function contribution(message) {
+  const read = cacheRead(message);
+  return {
+    totalTokens: responseTokens(message),
+    input: inputTokens(message),
+    cacheRead: read,
+    cacheWrite: cacheWrite(message),
+    cacheReads: isNumber(read) ? 1 : undefined,
+    cacheHits: isNumber(read) ? (read > 0 ? 1 : 0) : undefined,
+  };
+}
+
+function credit(state, parts, sign) {
+  for (const [key, value] of Object.entries(parts)) add(state[key], value, sign);
+}
+
+// Adds `entries` (in file order, after those already in `state`) to `state`, which it changes
+// and returns; without a `state` it starts a new one.
+function fold(state, entries) {
+  const s = state ?? emptyState();
+  for (const entry of entries) {
+    const { message } = entry;
+    const time = Date.parse(entry.timestamp);
+    if ((entry.type === 'user' || entry.type === 'assistant') && message && typeof message === 'object' && isNumber(time)) {
+      s.firstMessage ??= time;
+      s.lastMessage = time;
+      if (entry.type === 'assistant' && message.model !== SYNTHETIC_MODEL) {
+        const parts = contribution(message);
+        if (typeof message.id === 'string') {
+          const earlier = s.responses.get(message.id);
+          if (earlier) credit(s, earlier, -1);
+          s.responses.set(message.id, parts);
+        }
+        credit(s, parts, 1);
+        if (s.logged) s.logged.stale = true;
+      }
+    } else if (entry.type === 'cost-state') {
+      s.logged = { usd: entry.totalCostUSD, stale: false };
+    } else if (entry.type === 'system' && entry.subtype === 'compact_boundary') {
+      const trigger = entry.compactMetadata?.trigger;
+      if (trigger === 'auto') s.compactions += 1;
+      else if (trigger !== 'manual') s.unknownTrigger = true;
+    }
+  }
+  return s;
+}
+
+// The messages and the API responses of a text, for the figures about the end of the file.
+function parseTail(entries) {
+  // user and assistant entries, with the entry's own ISO timestamp as epoch ms
+  const messages = [];
+  // responses once each, dated by their last block
+  const assistants = [];
+  const slots = new Map();
+  for (const entry of entries) {
+    const { message } = entry;
+    const time = Date.parse(entry.timestamp);
+    if ((entry.type === 'user' || entry.type === 'assistant') && message && typeof message === 'object' && isNumber(time)) {
+      const synthetic = entry.type === 'assistant' && message.model === SYNTHETIC_MODEL;
+      messages.push({ role: entry.type, time, prompt: entry.type === 'user' && isPrompt(entry), synthetic });
+      if (entry.type === 'assistant' && !synthetic) {
+        const response = { message, time };
+        const slot = typeof message.id === 'string' ? slots.get(message.id) : undefined;
+        if (slot === undefined) {
+          if (typeof message.id === 'string') slots.set(message.id, assistants.length);
+          assistants.push(response);
+        } else {
+          assistants[slot] = response;
+        }
+      }
+    }
+  }
+  return { messages, assistants };
+}
+
 function model({ assistants }) {
   const latest = assistants.at(-1)?.message.model;
   return typeof latest === 'string' && latest ? { model: latest } : {};
 }
 
 // First to last message, by the entries' own ISO timestamps.
-function duration({ messages }) {
-  return messages.length ? { durationMs: messages.at(-1).time - messages[0].time } : {};
+function duration({ firstMessage, lastMessage }) {
+  return isNumber(firstMessage) ? { durationMs: lastMessage - firstMessage } : {};
 }
 
-function tokens(session) {
-  const totalTokens = sumAssistants(session, responseTokens);
-  return totalTokens === undefined ? {} : { totalTokens };
+function tokens({ totalTokens }) {
+  return totalTokens.sum === undefined ? {} : { totalTokens: totalTokens.sum };
 }
 
 // Hit rate is over the session's token counts (D6); it needs all three counts to be logged
 // and a non-zero total.
-function cacheRate(session) {
-  const input = sumAssistants(session, inputTokens);
-  const read = sumAssistants(session, cacheRead);
-  const write = sumAssistants(session, cacheWrite);
-  if (input === undefined || read === undefined || write === undefined) return {};
-  const total = input + read + write;
-  return total > 0 ? { cacheHitRate: read / total } : {};
+function cacheRate({ input, cacheRead: read, cacheWrite: write }) {
+  if (input.sum === undefined || read.sum === undefined || write.sum === undefined) return {};
+  const total = input.sum + read.sum + write.sum;
+  return total > 0 ? { cacheHitRate: read.sum / total } : {};
 }
 
 // A response is a hit when its cache read is above 0 and a miss when it is 0 (D6); one that
 // logged no cache read is neither.
-function cacheTurns({ assistants }) {
-  const reads = assistants.map(({ message }) => cacheRead(message)).filter(isNumber);
-  if (!reads.length) return {};
-  const cacheHits = reads.filter((read) => read > 0).length;
-  return { cacheHits, cacheMisses: reads.length - cacheHits };
+// (`cacheHits` is a tally that gets a 0 or a 1 for every response that `cacheReads` counts.)
+function cacheTurns({ cacheReads, cacheHits }) {
+  return cacheReads.sum === undefined ? {} : { cacheHits: cacheHits.sum, cacheMisses: cacheReads.sum - cacheHits.sum };
 }
 
 // `usage.cache_creation` splits the tokens written to the cache by lifetime class.
@@ -141,10 +184,12 @@ function cacheExpiry({ assistants }, now) {
 }
 
 // Compactions Claude Code itself started: `compact_boundary` entries whose
-// `compactMetadata.trigger` is `auto`. Counting needs the whole file; a tail window can hold
-// only some of them, so without `sources.wholeFile` it is unknown, never 0.
-function autocompactions({ compactions }, now, sources) {
-  return sources.wholeFile === true ? { autocompactions: compactions } : {};
+// `compactMetadata.trigger` is `auto`. Counting needs the whole file: the count of a state that
+// holds only a tail window would be too low, so unless the state is the whole file's it is
+// unknown, never 0. It is also unknown when a boundary names a trigger other than `manual` and
+// `auto`, which could be an automatic one.
+function autocompactions({ compactions, unknownTrigger }, whole) {
+  return whole && !unknownTrigger ? { autocompactions: compactions } : {};
 }
 
 // Context usage is the prompt of the latest response: input plus the cache it read and wrote.
@@ -165,9 +210,9 @@ function cost({ logged }) {
 // Token burn is derived from the session's own duration and token figures; a session that has
 // not lasted (duration 0) or lacks the input reads n/a. A cost per hour would divide a total
 // logged at save time by the time read here, so there is none.
-function burnRate(session) {
-  const { durationMs } = duration(session);
-  const { totalTokens } = tokens(session);
+function burnRate(state) {
+  const { durationMs } = duration(state);
+  const { totalTokens } = tokens(state);
   return durationMs > 0 && totalTokens !== undefined ? { burnTokensPerMin: totalTokens / (durationMs / 60000) } : {};
 }
 
@@ -176,23 +221,40 @@ function sinceActivity({ messages }, now) {
   return messages.length && isNumber(now) ? { sinceActivityMs: now - messages.at(-1).time } : {};
 }
 
-// Last turn: the last assistant entry minus the prompt that began its turn (the nearest
-// prompt before it; the tool results in between do not begin one).
+// Last turn: the last reply of the API (a placeholder written for a reply it never made is
+// none) minus the prompt that began its turn (the nearest prompt before it; the tool results
+// in between do not begin one).
 function latency({ messages }) {
-  const reply = messages.findLastIndex((e) => e.role === 'assistant');
+  const reply = messages.findLastIndex((e) => e.role === 'assistant' && !e.synthetic);
   const began = messages.findLastIndex((e, i) => i < reply && e.prompt);
   return reply < 0 || began < 0 ? {} : { latencyMs: messages[reply].time - messages[began].time };
 }
 
-const FIGURES = [model, duration, tokens, cacheRate, cacheTurns, cacheExpiry, autocompactions, context, cost, burnRate, sinceActivity, latency];
+const TOTALS = [duration, tokens, cacheRate, cacheTurns, cost, burnRate];
+const LATEST = [model, cacheExpiry, context, sinceActivity, latency];
 
-// `input` is the jsonl text, or `{ text, sources }` where `sources` holds what the caller
-// knows besides the text: `wholeFile`, true when the text is the whole file and not a tail
-// window. A source that is absent reads as unknown.
+// `input` is the jsonl text, or `{ text, sources, state }`:
+//   - `text` is the file's text, or its tail window when the file is larger;
+//   - `state` is the accumulator of `fold` over the whole file, which the caller keeps for a
+//     file larger than the tail window; `null` when it could not be built, so the session
+//     totals read n/a. Without one, the text is folded, and counts as the whole file only when
+//     `sources.wholeFile` is true (a Claude Code file has no header to tell it by);
+//   - `sources.wholeFile`: true when the text is the whole file and not a tail window. A source
+//     that is absent reads as unknown.
 export const claudeProvider = {
+  fold,
+
   readStats(input, now) {
-    const { text, sources } = typeof input === 'string' ? { text: input } : input;
-    const session = parseSession(text);
-    return Object.assign({}, ...FIGURES.map((figure) => figure(session, now, sources ?? {})));
+    const { text, sources, state } = typeof input === 'string' ? { text: input } : input;
+    const entries = parseEntries(text);
+    const tail = parseTail(entries);
+    const total = state === undefined ? fold(undefined, entries) : state;
+    const whole = state !== undefined || sources?.wholeFile === true;
+    return Object.assign(
+      {},
+      ...(total ? TOTALS.map((figure) => figure(total)) : []),
+      ...(total ? [autocompactions(total, whole)] : []),
+      ...LATEST.map((figure) => figure(tail, now)),
+    );
   },
 };

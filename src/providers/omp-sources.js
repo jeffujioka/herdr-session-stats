@@ -3,13 +3,14 @@
 // is the omp provider's `createSessions` hook (see the stats-shape header of
 // src/providers/index.js); the card builder asks the registry and knows nothing of omp.
 // Runtime-neutral: it takes the app's `exec` and `readTextFile` bound to a machine, and runs
-// only read-only programs there: `find` with `stat`, `tail`, `grep` (through the session
+// only read-only programs there: `find` with `stat`, `tail` and `dd` (through the session
 // reader), and `sqlite3 -readonly`. omp's own CLI is not run: `omp config list` and `omp config
 // get` write omp's agent.db and its natives folder when they start, so the compaction settings
 // are read from config.yml itself.
 
 import { createSessionReader } from '../refresh.js';
-import { linkSession } from '../session-link.js';
+import { ompProvider } from './omp.js';
+import { findSessionFile } from './session-files.js';
 
 // The model catalogue and the compaction settings change rarely; they are read again after
 // this long rather than at every refresh.
@@ -26,22 +27,6 @@ export function sessionDirSlug(cwd, home) {
   if (home && (path === home || path.startsWith(`${home}/`))) return `-${flat(path.slice(home.length + 1))}`;
   return `--${flat(path.replace(/^[/\\]/, ''))}--`;
 }
-
-// Lines of `stat` as `<mtime seconds> <size> <path>`; anything else is skipped.
-export function parseSessionFiles(stdout) {
-  const files = [];
-  for (const line of stdout.split('\n')) {
-    const match = /^(\d+) (\d+) (.+)$/.exec(line);
-    if (match) files.push({ path: match[3], mtimeMs: Number(match[1]) * 1000, size: Number(match[2]) });
-  }
-  return files;
-}
-
-// `stat` prints its format differently on BSD (macOS) and GNU (Linux); `uname -s` says which.
-const STAT_FORMATS = {
-  Darwin: ['-f', '%m %z %N'],
-  Linux: ['-c', '%Y %s %n'],
-};
 
 // Latest provider named by an assistant message of a session tail, or null. The catalogue
 // holds one row per provider, so the model's window is looked up in its provider's.
@@ -145,10 +130,10 @@ function catalogueQuery(provider) {
 // machine (null: this computer), the first with its timeout. State kept between calls (the
 // per-machine session readers, the slow sources) lives in the returned object.
 export function createOmpSessions({ execOn, readTextOn }) {
-  // machine -> the reader that keeps that machine's per-file compaction counts
+  // machine -> the reader that keeps that machine's per-file totals
   const readers = new Map();
   function readerOn(machine) {
-    if (!readers.has(machine)) readers.set(machine, createSessionReader({ exec: execOn(machine) }));
+    if (!readers.has(machine)) readers.set(machine, createSessionReader({ exec: execOn(machine), fold: ompProvider.fold }));
     return readers.get(machine);
   }
 
@@ -192,25 +177,19 @@ export function createOmpSessions({ execOn, readTextOn }) {
 
   return {
     // The session file the pane's folder links to (`{ path, mtimeMs, size }`), or null.
-    async link({ machine, cwd, home, os, now }) {
-      const format = STAT_FORMATS[os];
-      if (!format) return null;
+    link({ machine, cwd, home, os, now }) {
       const dir = `${home}/.omp/agent/sessions/${sessionDirSlug(cwd, home)}`;
-      const listed = await execOn(machine)('find', [dir, '-maxdepth', '1', '-name', '*.jsonl', '-exec', 'stat', ...format, '{}', '+']);
-      if (listed.code !== 0) return null;
-      const files = parseSessionFiles(listed.stdout);
-      const path = linkSession(files, now);
-      return files.find((file) => file.path === path) ?? null;
+      return findSessionFile(execOn(machine), { dir, os, now });
     },
 
     // The `input` of `readStats('omp', input, now)` for a linked file.
     async read(file, { machine, home, now }) {
-      const { text, sources } = await readerOn(machine).read(file);
+      const { text, sources, state } = await readerOn(machine).read(file);
       const [catalogue, compaction] = await Promise.all([
         readCatalogue(machine, home, lastAssistantProvider(text), now),
         readCompaction(machine, home, now),
       ]);
-      return { text, sources: { ...sources, catalogue, compaction } };
+      return { text, state, sources: { ...sources, catalogue, compaction } };
     },
   };
 }

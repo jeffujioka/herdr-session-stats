@@ -97,4 +97,26 @@ describe('claude session: model, tokens, cache and duration', () => {
     expect(readStats('claude-code', { text, sources: { wholeFile: false } }, LAST_REPLY).autocompactions).toBe(NA);
     expect(readStats('claude-code', text, LAST_REPLY).autocompactions).toBe(NA);
   });
+
+  test('a compact boundary with another trigger makes the count unknown', () => {
+    const boundary = (trigger) => line({ type: 'system', subtype: 'compact_boundary', timestamp: '2026-09-07T20:19:00.000Z', compactMetadata: trigger === undefined ? {} : { trigger } });
+    const whole = { wholeFile: true };
+    // a trigger Claude Code may use for its own compactions under a name this reader does not know
+    for (const trigger of ['scheduled', undefined]) {
+      const text = `${boundary('auto')}\n${boundary(trigger)}\n${BASIC}`;
+      expect(readStats('claude-code', { text, sources: whole }, LAST_REPLY).autocompactions).toBe(NA);
+    }
+    // manual and auto are known kinds
+    expect(readStats('claude-code', { text: `${boundary('manual')}\n${boundary('auto')}\n${BASIC}`, sources: whole }, LAST_REPLY).autocompactions).toBe(1);
+  });
+
+  test('the latency of the last turn skips a placeholder reply', () => {
+    const prompt = line({ type: 'user', timestamp: '2026-09-07T20:00:00.000Z', message: { role: 'user', content: 'hi' } });
+    const reply = assistant('2026-09-07T20:00:10.000Z', 'r1', usage(1, 1, 0, 0));
+    const placeholder = assistant('2026-09-07T20:00:40.000Z', 'syn', usage(0, 0, 0, 0), '<synthetic>');
+
+    expect(readStats('claude-code', `${prompt}\n${reply}\n${placeholder}\n`, LAST_REPLY).latencyMs).toBe(10_000);
+    // nothing but a placeholder answered: there is no turn to time
+    expect(readStats('claude-code', `${prompt}\n${placeholder}\n`, LAST_REPLY).latencyMs).toBe(NA);
+  });
 });

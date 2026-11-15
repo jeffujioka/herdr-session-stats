@@ -11,18 +11,27 @@ const NOW = Date.parse('2026-09-07T20:22:00.000Z');
 const DIR = `${HOME}/.claude/projects/-Users-me-work-app-v1-2`;
 
 // Stand-in with the exact signature of herdr's `exec(command, args, options)` for the read-only
-// programs a Claude Code card runs: `uname`, `find ... stat` over `DIR` and `tail -c N -- path`.
-function fakeExec(files) {
+// programs a Claude Code card runs: `uname`, `find ... stat` over `DIR`, `tail -c N -- path`
+// and `dd if=path bs=B skip=K count=1`. `ddFails` makes every dd exit 1.
+function fakeExec(files, { ddFails = false } = {}) {
   const calls = [];
   async function exec(command, args = [], options = {}) {
     calls.push({ command, args, options });
-    const ok = (stdout) => ({ code: 0, stdout, stderr: '' });
+    const ok = (stdout, stderr = '') => ({ code: 0, stdout, stderr });
     if (command === 'uname') return ok('Darwin\n');
     if (command === 'find') {
       if (args[0] !== DIR) return { code: 1, stdout: '', stderr: 'No such file or directory' };
       return ok(files.map((f) => `${Math.floor(f.mtimeMs / 1000)} ${f.size} ${DIR}/${f.name}`).join('\n') + '\n');
     }
     if (command === 'tail') return ok(files.find((f) => `${DIR}/${f.name}` === args.at(-1)).text.slice(-Number(args[1])));
+    if (command === 'dd') {
+      if (ddFails) return { code: 1, stdout: '', stderr: 'dd: failed' };
+      const bytes = Buffer.from(files.find((f) => `${DIR}/${f.name}` === args[0].slice(3)).text);
+      const size = Number(args[1].slice(3));
+      const skip = Number(args[2].slice(5));
+      const part = bytes.subarray(skip * size, (skip + 1) * size);
+      return ok(part.toString('utf8'), `${part.length} bytes copied\n`);
+    }
     return { code: 128, stdout: '', stderr: 'not a git repository' };
   }
   return { exec, calls };
@@ -54,13 +63,31 @@ describe('claude sessions', () => {
     for (const call of calls) expect(call.options.timeout).toBeGreaterThan(0);
   });
 
-  test('a large session is read through its tail and its compaction count is n/a', async () => {
-    const big = { name: 'cccc.jsonl', mtimeMs: NOW - 1_000, size: TAIL_BYTES * 4, text: BASIC };
-    const { exec } = fakeExec([big]);
+  // the session of BASIC, then lines that carry no figure, far more than the tail window holds
+  const big = () => {
+    const text = `${BASIC}${'{"type":"attachment"}\n'.repeat(Math.ceil((TAIL_BYTES * 2) / 22))}`;
+    return { name: 'cccc.jsonl', mtimeMs: NOW - 1_000, size: Buffer.byteLength(text), text };
+  };
+
+  test('a large session is read through its tail and its whole file', async () => {
+    const { exec, calls } = fakeExec([big()]);
     const builder = createCardBuilder({ exec, readTextFile: async () => null, home: HOME });
     const [card] = await builder.build([pane], NOW);
 
-    expect(card.stats.model).toBe('claude-opus-4-6');
+    // the session lies before the tail window: its totals come from the whole-file scan, and
+    // what is about the end of the file (the model of the latest reply) is not in the tail
+    expect(card.stats.totalTokens).toBe(180562);
+    expect(card.stats.autocompactions).toBe(0);
+    expect(card.stats.model).toBe(NA);
+    expect(calls.some((c) => c.command === 'dd')).toBe(true);
+  });
+
+  test('a large session whose scan fails has no totals and no compaction count', async () => {
+    const { exec } = fakeExec([big()], { ddFails: true });
+    const builder = createCardBuilder({ exec, readTextFile: async () => null, home: HOME });
+    const [card] = await builder.build([pane], NOW);
+
+    expect(card.stats.totalTokens).toBe(NA);
     expect(card.stats.autocompactions).toBe(NA);
   });
 });
