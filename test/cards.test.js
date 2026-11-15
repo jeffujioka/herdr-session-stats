@@ -180,6 +180,7 @@ describe('cards', () => {
     // a harness the cards know nothing of: one registry entry with its own hook, and the pane
     // of its app gets a card, drawn like any other
     const seen = [];
+    let listed = 0;
     registerProvider('acme-agent', {
       readStats: (input) => ({ model: input.model, totalTokens: input.tokens }),
       createSessions: () => ({
@@ -190,6 +191,10 @@ describe('cards', () => {
         async read(file, where) {
           seen.push({ file, where });
           return { model: 'acme-1', tokens: 1234 };
+        },
+        async list() {
+          listed += 1;
+          throw new Error('list failed');
         },
       }),
     });
@@ -210,6 +215,13 @@ describe('cards', () => {
     expect(rows.Cost).toBe(NA);
     // no omp or Claude Code program was run for it
     expect(calls.map((c) => c.command).filter((command) => command === 'find' || command === 'tail' || command === 'sqlite3')).toEqual([]);
+
+    // two panes of the folder, whose `list` fails: the group falls back to the single link, so
+    // the panes still show the linked session (collapsed to one card) rather than n/a
+    const both = await build([pane({ app: 'acme-agent' }), pane({ app: 'acme-agent', pane: 'p2', terminal: 't2' })], NOW);
+    expect(listed).toBe(1);
+    expect(both).toHaveLength(1);
+    expect(both[0].stats).toMatchObject({ model: 'acme-1', totalTokens: 1234 });
   });
 
   test('the branch of the pane wins; git fills a missing one and the origin', async () => {
