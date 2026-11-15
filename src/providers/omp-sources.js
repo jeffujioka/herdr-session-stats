@@ -172,9 +172,9 @@ export function createOmpSessions({ execOn, readTextOn }) {
 
   return {
     // The session file the pane's folder links to (`{ path, mtimeMs, size }`), or null.
-    link({ machine, cwd, home, os, now }) {
+    link({ machine, cwd, home, os }) {
       const dir = `${home}/.omp/agent/sessions/${sessionDirSlug(cwd, home)}`;
-      return findSessionFile(execOn(machine), { dir, os, now });
+      return findSessionFile(execOn(machine), { dir, os });
     },
 
     // The `input` of `readStats('omp', input, now)` for a linked file.

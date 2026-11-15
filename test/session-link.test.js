@@ -1,5 +1,7 @@
 import { describe, expect, test } from 'bun:test';
-import { LINK_WINDOW_MS, collapseBySession, linkSession } from '../src/session-link.js';
+import * as sessionLink from '../src/session-link.js';
+
+const { collapseBySession, linkSession } = sessionLink;
 
 const NOW = Date.parse('2026-05-01T12:00:00Z');
 const MIN = 60_000;
@@ -9,16 +11,18 @@ describe('Pane to session link', () => {
   test('newest file wins', () => {
     const files = [file('/s/c.jsonl', 9), file('/s/a.jsonl', 1), file('/s/b.jsonl', 2)];
 
-    expect(linkSession(files, NOW)).toBe('/s/a.jsonl');
+    expect(linkSession(files)).toBe('/s/a.jsonl');
   });
 
-  test('stale file is not linked', () => {
-    expect(LINK_WINDOW_MS).toBe(5 * MIN);
-    expect(linkSession([file('/s/old.jsonl', 20)], NOW)).toBeNull();
+  test('an idle file is still linked', () => {
+    // however long ago it changed: there is no link window any more
+    expect(sessionLink.LINK_WINDOW_MS).toBeUndefined();
+    expect(linkSession([file('/s/old.jsonl', 20)])).toBe('/s/old.jsonl');
+    expect(linkSession([file('/s/ancient.jsonl', 60 * 24 * 30), file('/s/old.jsonl', 20)])).toBe('/s/old.jsonl');
   });
 
   test('no files is not linked', () => {
-    expect(linkSession([], NOW)).toBeNull();
+    expect(linkSession([])).toBeNull();
   });
 });
 

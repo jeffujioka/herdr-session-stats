@@ -5,8 +5,6 @@
 // program there, `sqlite3 -readonly -json <database> <SELECT>`; opencode's own CLI is not run
 // and nothing is written. The database and its layout: docs/opencode-session-format.md.
 
-import { linkSession } from '../session-link.js';
-
 // opencode's database under the machine's home folder. opencode follows `XDG_DATA_HOME`; the
 // mod reads the default place only, and a pane whose opencode keeps it elsewhere reads n/a.
 const databaseOf = (home) => `${home}/.local/share/opencode/opencode.db`;
@@ -87,14 +85,13 @@ export function createOpencodeSessions({ execOn }) {
   return {
     // The session the pane's folder links to, as `{ path, mtimeMs, size }`: `path` is the
     // session id, which names it on its machine, and `size` is 0, the database being one file
-    // for all sessions. Null when there is none, it did not change within the link window
-    // (src/session-link.js), or the database cannot be read.
-    async link({ machine, cwd, home, now }) {
+    // for all sessions. Null when there is none or the database cannot be read; the newest
+    // session of the folder links however long ago it changed (src/session-link.js).
+    async link({ machine, cwd, home }) {
       const rows = await select(execOn(machine), databaseOf(home), sessionQuery(cwd));
       const row = rows?.[0];
       if (!row || typeof row.id !== 'string' || !Number.isFinite(row.mtimeMs)) return null;
-      const file = { path: row.id, mtimeMs: row.mtimeMs, size: 0 };
-      return linkSession([file], now) === null ? null : file;
+      return { path: row.id, mtimeMs: row.mtimeMs, size: 0 };
     },
 
     // The `input` of `readStats('opencode', input, now)` for a linked session. The messages

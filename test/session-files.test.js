@@ -20,7 +20,7 @@ const statOf = (args) => args.slice(args.indexOf('-exec') + 1, args.indexOf('{}'
 describe('finding a session file', () => {
   test('on macOS the system stat is run, whatever stat comes first in PATH', async () => {
     const { exec, calls } = recordingExec();
-    const file = await findSessionFile(exec, { dir: DIR, os: 'Darwin', now: NOW });
+    const file = await findSessionFile(exec, { dir: DIR, os: 'Darwin' });
 
     expect(file).toEqual({ path: `${DIR}/a.jsonl`, mtimeMs: Math.floor((NOW - 1000) / 1000) * 1000, size: 42 });
     expect(calls).toHaveLength(1);
@@ -31,7 +31,7 @@ describe('finding a session file', () => {
 
   test('on Linux stat is GNU stat', async () => {
     const { exec, calls } = recordingExec();
-    await findSessionFile(exec, { dir: DIR, os: 'Linux', now: NOW });
+    await findSessionFile(exec, { dir: DIR, os: 'Linux' });
 
     expect(statOf(calls[0].args)).toEqual(['stat', '-c', '%Y %s %n']);
   });
@@ -39,7 +39,7 @@ describe('finding a session file', () => {
   test('another system has no session file and runs nothing', async () => {
     const { exec, calls } = recordingExec();
 
-    expect(await findSessionFile(exec, { dir: DIR, os: 'Plan9', now: NOW })).toBeNull();
+    expect(await findSessionFile(exec, { dir: DIR, os: 'Plan9' })).toBeNull();
     expect(calls).toEqual([]);
   });
 });

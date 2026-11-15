@@ -105,7 +105,7 @@ export function createCardBuilder({ exec, readTextFile, home }) {
   }
 
   // The pane's linked session file and the machine's home, or null: no hook, no folder, a
-  // machine that cannot be reached, or no session that is recent enough.
+  // machine that cannot be reached, or a folder with no session.
   async function link(pane, now) {
     try {
       const hook = sessionsOf(pane.app);

@@ -35,12 +35,12 @@ const STAT_COMMANDS = {
 
 // The session file in `dir` (only the `.jsonl` files directly in it) that the pane links to
 // (see session-link.js), as `{ path, mtimeMs, size }`, or null.
-export async function findSessionFile(exec, { dir, os, now }) {
+export async function findSessionFile(exec, { dir, os }) {
   const stat = STAT_COMMANDS[os];
   if (!stat) return null;
   const listed = await exec('find', [dir, '-maxdepth', '1', '-name', '*.jsonl', '-exec', ...stat, '{}', '+']);
   if (listed.code !== 0) return null;
   const files = parseSessionFiles(listed.stdout);
-  const path = linkSession(files, now);
+  const path = linkSession(files);
   return files.find((file) => file.path === path) ?? null;
 }

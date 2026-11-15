@@ -129,14 +129,6 @@ describe('cards', () => {
     expect(cards[0].stats).toEqual({ ...readStats('', null, NOW), harness: 'omp' });
   });
 
-  test('a stale session is not linked', async () => {
-    const stale = { ...SESSION, mtimeMs: NOW - 20 * 60_000 };
-    const { build, calls } = builder(localWorld({ sessions: { [SESSION_DIR]: [stale] } }));
-    const [card] = await build([pane()], NOW);
-    expect(card.stats.model).toBe(NA);
-    expect(calls.some((c) => c.command === 'tail')).toBe(false);
-  });
-
   test('the newest session file wins', async () => {
     const old = { name: 'old.jsonl', mtimeMs: NOW - 4 * 60_000, size: 10 };
     const { build, calls } = builder(localWorld({ sessions: { [SESSION_DIR]: [old, SESSION] } }));
