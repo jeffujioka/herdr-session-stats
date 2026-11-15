@@ -3,13 +3,14 @@
 // is the omp provider's `createSessions` hook (see the stats-shape header of
 // src/providers/index.js); the card builder asks the registry and knows nothing of omp.
 // Runtime-neutral: it takes the app's `exec` and `readTextFile` bound to a machine, and runs
-// only read-only programs there: `find` with `stat`, `tail` and `dd` (through the session
+// only read-only programs there: `find` with `stat`, `head`, `tail` and `dd` (through the session
 // reader), and `sqlite3 -readonly`. omp's own CLI is not run: `omp config list` and `omp config
 // get` write omp's agent.db and its natives folder when they start, so the compaction settings
 // are read from config.yml itself.
 
+import { parseEntries } from './jsonl.js';
 import { ompProvider } from './omp.js';
-import { findSessionFile, sessionReaders } from './session-files.js';
+import { findSessionFile, listSessionFiles, sessionReaders } from './session-files.js';
 
 // The model catalogue and the compaction settings change rarely; they are read again after
 // this long rather than at every refresh.
@@ -125,6 +126,23 @@ function catalogueQuery(provider) {
   );
 }
 
+// The folder omp keeps the sessions of a working folder in.
+const sessionDir = (cwd, home) => `${home}/.omp/agent/sessions/${sessionDirSlug(cwd, home)}`;
+
+// The title of a session, from the first line of its file: omp writes the `title` entry there
+// and rewrites it in place when the title changes (it always equals the latest `title_change`
+// entry), so one short read gives it. '' when the file has none, or is not readable: the
+// session then matches no pane title and takes an untitled pane (shareSessions).
+async function readTitle(run, path) {
+  try {
+    const { code, stdout } = await run('head', ['-n', '1', '--', path]);
+    const entry = code === 0 ? parseEntries(stdout)[0] : null;
+    return entry?.type === 'title' && typeof entry.title === 'string' ? entry.title : '';
+  } catch {
+    return '';
+  }
+}
+
 // `execOn(machine)` and `readTextOn(machine)`: the app's `exec` and `readTextFile` bound to a
 // machine (null: this computer), the first with its timeout. State kept between calls (the
 // per-machine session readers, the slow sources) lives in the returned object.
@@ -173,8 +191,14 @@ export function createOmpSessions({ execOn, readTextOn }) {
   return {
     // The session file the pane's folder links to (`{ path, mtimeMs, size }`), or null.
     link({ machine, cwd, home, os }) {
-      const dir = `${home}/.omp/agent/sessions/${sessionDirSlug(cwd, home)}`;
-      return findSessionFile(execOn(machine), { dir, os });
+      return findSessionFile(execOn(machine), { dir: sessionDir(cwd, home), os });
+    },
+
+    // The `limit` newest session files of the folder, each with its title.
+    async list({ machine, cwd, home, os, limit }) {
+      const run = execOn(machine);
+      const files = await listSessionFiles(run, { dir: sessionDir(cwd, home), os, limit });
+      return Promise.all(files.map(async (file) => ({ ...file, title: await readTitle(run, file.path) })));
     },
 
     // The `input` of `readStats('omp', input, now)` for a linked file.

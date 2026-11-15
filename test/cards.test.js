@@ -39,6 +39,11 @@ function fakeExec(world, { unreachable = [], hang = [] } = {}) {
       return ok(files.map((f) => `${Math.floor(f.mtimeMs / 1000)} ${f.size} ${args[0]}/${f.name}`).join('\n') + '\n');
     }
     if (command === 'tail') return w.text === undefined ? fail : ok(w.text);
+    // first line of a session file: the title entry; `w.titles` maps a file name to its title
+    if (command === 'head') {
+      const title = w.titles?.[args.at(-1).split('/').pop()];
+      return title === undefined ? fail : ok(`${JSON.stringify({ type: 'title', v: 1, title })}\n`);
+    }
     if (command === 'sqlite3') return w.db === undefined ? fail : ok(JSON.stringify(w.db));
     if (command === 'git') {
       const repo = w.git?.[options.cwd];
@@ -134,6 +139,34 @@ describe('cards', () => {
     const { build, calls } = builder(localWorld({ sessions: { [SESSION_DIR]: [old, SESSION] } }));
     await build([pane()], NOW);
     expect(calls.find((c) => c.command === 'tail').args.at(-1)).toBe(`${SESSION_DIR}/${SESSION.name}`);
+  });
+
+  test('panes in one folder show their own sessions, told apart by the pane title', async () => {
+    const older = { name: 'older.jsonl', mtimeMs: NOW - 30 * 60_000, size: 10 };
+    const world = localWorld({
+      sessions: { [SESSION_DIR]: [older, SESSION] },
+      titles: { [older.name]: 'FACT: Enable factory config', [SESSION.name]: '' },
+    });
+    const { build, calls } = builder(world);
+    const panes = [
+      pane({ pane: 'new', terminal: 't1', title: 'π > app' }),
+      pane({ pane: 'old', terminal: 't2', title: 'π > FACT: Enable factory config' }),
+    ];
+
+    const cards = await build(panes, NOW);
+
+    // both sessions are shown, in pane order, and the folder was listed once for both panes
+    expect(cards.map((c) => c.id)).toEqual(['new', 'old']);
+    expect(calls.filter((c) => c.command === 'find')).toHaveLength(1);
+    expect(calls.filter((c) => c.command === 'tail').map((c) => c.args.at(-1)).sort()).toEqual(
+      [`${SESSION_DIR}/${older.name}`, `${SESSION_DIR}/${SESSION.name}`].sort(),
+    );
+  });
+
+  test('a folder with one agent pane reads no title', async () => {
+    const { build, calls } = builder(localWorld({ titles: { [SESSION.name]: 'x' } }));
+    await build([pane()], NOW);
+    expect(calls.filter((c) => c.command === 'head')).toEqual([]);
   });
 
   test('an unsupported harness shows its name and n/a figures', async () => {
