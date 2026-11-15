@@ -71,8 +71,9 @@ const newScan = () => ({ state: undefined, block: 0, skip: 0, carry: '', pos: -1
 // `exec`: herdr's `exec`. `fold(state, entries)`: the provider's accumulator (see
 // src/providers/omp.js). `read(file)` takes `{ path, mtimeMs, size }` of a linked session file
 // and resolves to the `input` of `readStats(harness, input, now)`: `{ text, sources, state }`
-// with the tail window as `text`. A file no larger than the window is read whole by it, so
-// `sources.wholeFile` is true and the provider folds the text; a larger one gets a `state`
+// with the tail window as `text`. A file that `tail` finds shorter than the window (not what
+// the listing's size says, since a file grows) is read whole by it, so `sources.wholeFile` is
+// true and the provider folds the text; a larger one gets a `state`
 // over the whole file (see `advance`), or `null` when it could not be built, so that every
 // figure of the session totals reads n/a (D4) and is tried again at the next refresh. A tail
 // that cannot be read gives an empty text, so the figures about the end of the file read n/a
@@ -176,9 +177,15 @@ export function createSessionReader({ exec, fold }) {
       // a tail that cannot be read, or cannot be started, is an empty text
       const tail = await exec('tail', ['-c', String(TAIL_BYTES), '--', file.path]).catch(() => ({ code: -1 }));
       const text = tail.code === 0 ? tail.stdout : '';
-      if (file.size <= TAIL_BYTES) {
+      // The file is whole in the text when `tail` gave less than the window: that is what the
+      // file held when it was read, whatever the listing's size said (the file can grow between
+      // the two). A string of fewer UTF-16 units than the window can still be longer in bytes,
+      // so the exact length is counted only for those.
+      const whole = tail.code === 0 && text.length < TAIL_BYTES && utf8Length(text) < TAIL_BYTES;
+      // a tail that failed on a file the listing says fits is not tried again with a scan
+      if (whole || (tail.code !== 0 && file.size <= TAIL_BYTES)) {
         scans.delete(file.path);
-        return tail.code === 0 ? { text, sources: { wholeFile: true } } : { text, sources: {} };
+        return whole ? { text, sources: { wholeFile: true } } : { text, sources: {} };
       }
       const state = await queued(file.path, () => advance(file.path, file.size)).catch(() => null);
       return { text, sources: {}, state };

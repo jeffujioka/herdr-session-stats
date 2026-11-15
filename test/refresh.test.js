@@ -118,6 +118,33 @@ describe('refresh', () => {
     expect(await counted(reader, file(grown, 2000))).toBe(3);
   });
 
+  test('a file that grows past the window between the listing and the tail is not read as whole', async () => {
+    const grown = bigSession();
+    // what the listing saw: the header, the first compaction and a few messages
+    const listed = `${grown.split('\n').slice(0, 12).join('\n')}\n`;
+    expect(Buffer.byteLength(listed)).toBeLessThanOrEqual(TAIL_BYTES);
+    const files = new Map([[PATH, listed]]);
+    // the file grows after the lister's `stat`, before the tail is read
+    const { exec } = fakeExec(files, { before: (call) => call.command === 'tail' && call.args[1] === String(TAIL_BYTES) && files.set(PATH, grown) });
+    const input = await newReader(exec).read(file(listed));
+
+    // the tail is only the end of the file, so it is not the whole file; the totals come from
+    // the scan, and the first compaction, far out of the tail's reach, is counted
+    expect(input.sources.wholeFile).toBeUndefined();
+    expect(input.state).not.toBeNull();
+    expect(readStats('omp', input, NOW).autocompactions).toBe(2);
+  });
+
+  test('a file within the window is read whole', async () => {
+    const small = `${bigSession().split('\n').slice(0, 12).join('\n')}\n`;
+    const { exec, calls } = fakeExec(new Map([[PATH, small]]));
+    const input = await newReader(exec).read(file(small));
+
+    expect(input.sources).toEqual({ wholeFile: true });
+    expect(readStats('omp', input, NOW).autocompactions).toBe(1);
+    expect(calls.map((call) => call.command)).toEqual(['tail']);
+  });
+
   test('a failed incremental read goes on from where the scan stood', async () => {
     let text = bigSession();
     const files = new Map([[PATH, text]]);
