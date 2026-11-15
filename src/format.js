@@ -48,6 +48,16 @@ export function formatHomePath(folder, home) {
   return folder;
 }
 
+// The title of a session as the card shows it, from the pane's terminal title. omp sets the
+// terminal title to `π > <session title>` (the title may start with a private-use glyph, which
+// is part of it), so that `π > ` prefix is dropped for omp; another harness's title is taken
+// as it is (no other prefix is known). An untitled session's title is the folder's name, and
+// then there is nothing to show: null. Otherwise a `{ value, tone }` figure.
+export function formatSessionTitle(title, folder, harness) {
+  const text = (harness === 'omp' ? (title ?? '').replace(/^π >\s/, '') : title ?? '').trim();
+  return text === '' || text === formatFolderName(folder) ? null : { value: text, tone: 'normal' };
+}
+
 // A git remote's URL for reading: without the scheme, the user (credentials are masked
 // already) and the `.git` end, and an scp-style `host:path` written `host/path`:
 // "git@github.com:org/repo.git" is "github.com/org/repo". null stays null.

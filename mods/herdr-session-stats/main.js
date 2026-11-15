@@ -62,8 +62,9 @@ function meter(fraction, tickFraction, color, t) {
     .when(tickFraction !== null, (el) => el.child(div().absolute().top(0).left(pct(tickFraction)).w(2).h_full().bg(t.muted)));
 }
 
-// The identity group: the status dot and the folder's name with the status word, the path, the
-// branch and remote (and the machine of a remote pane), the harness and the model.
+// The identity group: the status dot and the folder's name with the status word, the session's
+// title (when it has one), the path, the branch and remote (and the machine of a remote pane),
+// the harness and the model.
 function identity(g, { t, tones, mono }) {
   const place = [g.branch === null ? null : `⎇ ${g.branch}`, g.remote].filter(Boolean).join(" · ");
   return v_flex()
@@ -76,6 +77,7 @@ function identity(g, { t, tones, mono }) {
         .child(text(TYPE.title, tones[g.name.tone]).flex_1().min_w_0().truncate().font_semibold().child(g.name.value))
         .child(text(TYPE.label, t.muted).flex_none().child(g.status.label)),
     )
+    .when(g.session !== null, (el) => el.child(text(TYPE.body, tones[g.session.tone]).truncate().child(g.session.value)))
     .child(text(TYPE.label, t.dim).truncate().font_family(mono).child(g.path.value))
     .when(place !== "" || g.machine !== null, (el) =>
       el.child(

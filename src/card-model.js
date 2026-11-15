@@ -12,9 +12,10 @@
 // `{ value, tone }` (and `label` when it has one); a value that reads 'n/a' has the tone `dim`,
 // any other `normal` unless said otherwise:
 //
-//   identity  { id, status: { tone, label }, name, path, branch, remote, machine, harness,
-//               model }   the status tone is the agent's status (working, blocked, done,
-//               idle), `dim` when unknown; `branch`, `remote` and `machine` are strings or null
+//   identity  { id, status: { tone, label }, name, session, path, branch, remote, machine,
+//               harness, model }   the status tone is the agent's status (working, blocked,
+//               done, idle), `dim` when unknown; `session` is the session's title as a figure,
+//               null when there is none; `branch`, `remote` and `machine` are strings or null
 //   context   { id, title, hero, gauge, figures }   hero: the usage percent with the window
 //               as its label, in the gauge's tone; gauge: { fraction, tickFraction, tone },
 //               the fill (usage over window) and the compaction trigger's place on the window,
@@ -26,7 +27,7 @@
 //
 // The `title` of a group is its heading in capitals; `figures` are `{ label, value, tone }`.
 
-import { formatCost, formatDuration, formatFolderName, formatHomePath, formatPercent, formatRemote, formatTokens, orNa } from './format.js';
+import { formatCost, formatDuration, formatFolderName, formatHomePath, formatPercent, formatRemote, formatSessionTitle, formatTokens, orNa } from './format.js';
 import { NA } from './providers/index.js';
 
 // A context is near compaction at these shares: of the compaction trigger when it is known,
@@ -119,11 +120,12 @@ function activityGroup(stats) {
   };
 }
 
-function identityGroup({ folder, branch, origin, harnessName, status, machine, stats }, home) {
+function identityGroup({ folder, title, branch, origin, harness, harnessName, status, machine, stats }, home) {
   return {
     id: 'identity',
     status: { tone: STATUSES.includes(status) ? status : 'dim', label: status ?? NA },
     name: figure(formatFolderName(folder)),
+    session: formatSessionTitle(title, folder, harness),
     path: figure(formatHomePath(folder, machine ? null : home)),
     branch: branch ?? null,
     remote: formatRemote(origin),
