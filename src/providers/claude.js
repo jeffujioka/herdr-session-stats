@@ -40,6 +40,10 @@ function emptyState() {
     // timestamps (epoch ms) of the first and the latest user or assistant entry
     firstMessage: undefined,
     lastMessage: undefined,
+    // timestamp (epoch ms) of the latest prompt, and the latency of the latest reply: its
+    // timestamp minus that of the prompt before it, undefined when unknown
+    began: undefined,
+    latencyMs: undefined,
     // API responses, once each: Claude Code writes a response as one entry per content block,
     // every one with the response's `message.id` and the same usage. A later entry replaces the
     // earlier, so `responses` keeps what each id added to the tallies, to take it back.
@@ -87,7 +91,10 @@ function fold(state, entries) {
     if ((entry.type === 'user' || entry.type === 'assistant') && message && typeof message === 'object' && isNumber(time)) {
       s.firstMessage ??= time;
       s.lastMessage = time;
+      if (entry.type === 'user' && isPrompt(entry)) s.began = time;
       if (entry.type === 'assistant' && message.model !== SYNTHETIC_MODEL) {
+        // the turn so far: this reply minus the prompt before it (none: unknown)
+        s.latencyMs = isNumber(s.began) ? time - s.began : undefined;
         const parts = contribution(message);
         if (typeof message.id === 'string') {
           const earlier = s.responses.get(message.id);
@@ -211,15 +218,14 @@ function sinceActivity({ messages }, now) {
 
 // Last turn: the last reply of the API (a placeholder written for a reply it never made is
 // none) minus the prompt that began its turn (the nearest prompt before it; the tool results
-// in between do not begin one).
-function latency({ messages }) {
-  const reply = messages.findLastIndex((e) => e.role === 'assistant' && !e.synthetic);
-  const began = messages.findLastIndex((e, i) => i < reply && e.prompt);
-  return reply < 0 || began < 0 ? {} : { latencyMs: messages[reply].time - messages[began].time };
+// in between do not begin one). Kept by `fold`, so a turn whose prompt lies before the tail
+// window still has its latency.
+function latency({ latencyMs }) {
+  return isNumber(latencyMs) ? { latencyMs } : {};
 }
 
-const TOTALS = [duration, tokens, cacheRate, cacheTurns, cost, burn];
-const LATEST = [model, cacheExpiry, context, sinceActivity, latency];
+const TOTALS = [duration, tokens, cacheRate, cacheTurns, cost, burn, latency];
+const LATEST = [model, cacheExpiry, context, sinceActivity];
 
 // `input` is the jsonl text, or `{ text, sources, state }`:
 //   - `text` is the file's text, or its tail window when the file is larger;

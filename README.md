@@ -110,7 +110,7 @@ or `node:` import, no `Bun`, no `TextEncoder`, no `setInterval`, and only `exec`
 ## Known limits
 
 - **A very long last line.** The figures about the end of a session (model, context, cache
-  left, activity, latency) are read from the last 256 KiB of the file. If its last line is
+  left, activity) are read from the last 256 KiB of the file. If its last line is
   longer than that, the window holds no whole line, and those figures read `n/a`. The totals
   (tokens, cost, compactions and so on) are not affected.
 - **A large session shows late the first time.** A session file over 256 KiB is read once in
