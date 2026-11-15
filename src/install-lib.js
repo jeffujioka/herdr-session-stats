@@ -24,15 +24,6 @@ const DOCK_PX = 320;
 export const DOCK_BLOCK_ID = 'session-stats-dock';
 export const DOCK_KEY = 'ctrl-shift-s';
 
-// Properties that describe the root node as a body (its way of arranging children and what
-// paints it); a root that is not a row moves them to the body it is wrapped as. What is left
-// (`titlebar`, `traffic_lights`, `terminal_menu`, `toast`, `preview`, `cloned_from`, the look
-// that cascades) stays on the root of the window.
-const BODY_KEYS = [
-  'type', 'children', 'gap', 'divider', 'resizable', 'padding', 'background', 'border', 'radius',
-  'shadow', 'focus', 'content', 'pane', 'active', 'header', 'floating', 'window_drag', 'min', 'max',
-];
-
 function findNode(node, id) {
   if (node.id === id) return node;
   for (const child of [...(node.children ?? []), ...(node.floating ?? [])]) {
@@ -42,28 +33,21 @@ function findNode(node, id) {
   return null;
 }
 
-// The docked block as a column at the right of the window. A root that is a row gets it as its
-// last child; any other root is wrapped as the body of a new row, so the block is still beside
-// the whole window. A block that is already in the layout is left as the developer has it.
+// The docked block as a column at the right of the window: the last child of a root that is a
+// row (the shape of herdr's own layouts). Any other root is refused, before anything is
+// written, rather than rearranged on a guess. A block that is already in the layout is left as
+// the developer has it.
 function addDock(layout) {
   if (findNode(layout, DOCK_BLOCK_ID)) return layout;
-  const out = structuredClone(layout);
-  const dock = {
-    id: DOCK_BLOCK_ID,
-    type: 'block',
-    size: { px: DOCK_PX },
-    min: 200,
-    max: 640,
-    content: { mod: MOD_NAME },
-  };
-  if (out.type === 'row') {
-    out.children = [...(out.children ?? []), dock];
-    return out;
+  if (layout.type !== 'row') {
+    throw new Error(`the layout has a ${layout.type} root; only a row root can take the docked column`);
   }
-  const body = { id: `${out.id ?? 'root'}-body` };
-  const root = {};
-  for (const [key, value] of Object.entries(out)) (BODY_KEYS.includes(key) ? body : root)[key] = value;
-  return { ...root, type: 'row', children: [body, dock] };
+  const out = structuredClone(layout);
+  out.children = [
+    ...(out.children ?? []),
+    { id: DOCK_BLOCK_ID, type: 'block', size: { px: DOCK_PX }, min: 200, max: 640, content: { mod: MOD_NAME } },
+  ];
+  return out;
 }
 
 export const PRESENTATIONS = [
@@ -82,11 +66,27 @@ export function bindingsFor(layoutName) {
   }));
 }
 
+// A `layout:<name>` section applies only while layouts/<name>.json shows, so the keys the
+// developer has for the layout they use do nothing in its clone. Copies them into the clone's
+// section, additively: a key the clone's section already has stays as it is, and nothing is
+// replaced or removed. Returns `{ keys, copied: [{ key, action }] }`; the input is not changed.
+export function copyLayoutKeys(keys, from, to) {
+  const out = structuredClone(keys);
+  const copied = [];
+  for (const [key, action] of Object.entries(out[from] ?? {})) {
+    if (out[to]?.[key] !== undefined) continue;
+    (out[to] ??= {})[key] = action;
+    copied.push({ key, action });
+  }
+  return { keys: out, copied };
+}
+
 // Merges `bindings` into `keys` without changing the input. A key goes in when no binding of
 // the developer's is in its way: the same key in the binding's own section, in `global` (which
 // it would shadow in the clone) or in `terminal` (which would shadow it) with another action is
 // a conflict; it is reported with what holds the key and not bound. A binding that is already in
-// place is neither added nor a conflict, so a second run changes nothing.
+// place is neither added nor a conflict, so a second run changes nothing. Keys are compared by
+// their exact spelling: `ctrl-shift-s` and `shift-ctrl-s` are not seen as the same key.
 export function mergeKeys(keys, bindings) {
   const out = structuredClone(keys);
   const added = [];
@@ -128,8 +128,12 @@ export function activeLayoutFrom({ status, shared }) {
   return null;
 }
 
-// The app writes these into a mod's folder itself; they are not the mod's.
-const isAppFile = (rel) => rel === 'jsconfig.json' || (!rel.includes('/') && rel.endsWith('.d.ts'));
+// What the app writes into a mod's folder itself, and what is not the mod's: `jsconfig.json`
+// and the `.d.ts` files at the top, hidden files and folders, `node_modules`.
+const isAppFile = (rel) =>
+  rel === 'jsconfig.json' ||
+  (!rel.includes('/') && rel.endsWith('.d.ts')) ||
+  rel.split('/').some((part) => part.startsWith('.') || part === 'node_modules');
 
 // Makes `<home>/mods/<mod>` a mirror of the built mod folder, leaving the app's own files.
 // Writes only what differs, so the app's hot reload fires for a change and for nothing else.
@@ -150,7 +154,8 @@ function mirrorMod(fs, from, to) {
 // Installs into `home` the mod built in `root` and the config around it. `active` is the name
 // of the developer's active layout (see `activeLayoutFrom`). Everything is read and checked
 // before anything is written, so a refusal leaves the home as it was. Returns
-// `{ mod: { written, removed }, layout: { name, created, changed }, keys: { added, conflicts } }`.
+// `{ mod: { written, removed }, layout: { name, created, changed },
+//    keys: { added, copied, conflicts } }`.
 export function install({ fs, root, home, active }) {
   const modFrom = `${root}/mods/${MOD_NAME}`;
   if (!fs.exists(`${modFrom}/main.js`)) throw new Error(`the mod is not built: run scripts/sync.sh first (no ${modFrom}/main.js)`);
@@ -177,14 +182,18 @@ export function install({ fs, root, home, active }) {
   const layout = PRESENTATIONS.reduce((l, p) => p.addTo(l), base);
   const layoutChanged = created || JSON.stringify(layout) !== JSON.stringify(base);
 
-  const merged = mergeKeys(JSON.parse(keysText), bindingsFor(target));
+  // The keys of the layout in use come first, so the clone's section is whole when the
+  // presentations' keys are checked against it.
+  const copy = target === active ? { keys: JSON.parse(keysText), copied: [] } : copyLayoutKeys(JSON.parse(keysText), `layout:${active}`, `layout:${target}`);
+  const merged = mergeKeys(copy.keys, bindingsFor(target));
+  const keysChanged = copy.copied.length > 0 || merged.added.length > 0;
 
   const mod = mirrorMod(fs, modFrom, `${home}/mods/${MOD_NAME}`);
   if (layoutChanged) fs.writeText(targetPath, formatJson(layout, baseText));
-  if (merged.added.length > 0) fs.writeText(keysPath, formatJson(merged.keys, keysText));
+  if (keysChanged) fs.writeText(keysPath, formatJson(merged.keys, keysText));
   return {
     mod,
     layout: { name: target, created, changed: layoutChanged },
-    keys: { added: merged.added, conflicts: merged.conflicts },
+    keys: { added: merged.added, copied: copy.copied, conflicts: merged.conflicts },
   };
 }

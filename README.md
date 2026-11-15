@@ -21,13 +21,24 @@ agents apart, run them in different folders.
 `herdr-app check`) and installs it into a herdr home (`--home`, else `HERDR_APP_HOME`, else
 `~/.config/herdr-app`). It never edits the layout you use:
 
-- the mod folder is copied to `mods/herdr-session-stats`;
+- the mod folder is copied to `mods/herdr-session-stats` (hidden files, `node_modules` and the
+  files the app writes there are left alone). The mod asks herdr for no place of its own
+  (`"place": "none"`), so herdr does not dock it into the layout you are looking at;
 - your active layout (what `herdr-app status` says is shown, else `layout` in `shared.json`)
-  is cloned as `<active>-stats`, with the docked block added as a new right-hand column. Show
-  it with `herdr-app do layout.switch --name <active>-stats`;
+  is cloned as `<active>-stats`, with the docked block added as a new right-hand column. Its
+  root must be a row, as in herdr's own layouts; any other root is refused before anything is
+  written. Show it with `herdr-app do layout.switch --name <active>-stats`;
 - `ctrl-shift-s` is bound to `layout.toggle` on the docked block, in the clone's `layout:`
   section of `keys.json`. Your bindings are kept; if the key is already taken (in that
-  section, in `global` or in `terminal`) the install says so and leaves it unbound.
+  section, in `global` or in `terminal`, by that exact spelling) the install says so and
+  leaves it unbound;
+- the keys you have in the `layout:<active>` section are copied into `layout:<active>-stats`,
+  because a section applies only while its layout shows. A key the clone's section already
+  has stays as it is; nothing is replaced.
+
+`keys.json` is rewritten as JSON in the file's own indentation whenever the install adds a key.
+By herdr's rules an edited keys file is yours entirely, so shortcuts that herdr adds in later
+releases then reach you only by hand.
 
 Run again, it changes nothing. An existing clone is completed, never rebuilt, so edits you made
 to it stay.
