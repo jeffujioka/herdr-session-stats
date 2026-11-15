@@ -11,8 +11,8 @@
 // Run again, it finds everything in place and writes nothing.
 //
 // The presentations are an additive list (`PRESENTATIONS`): each one is `{ id, blockId, key,
-// addTo(layout) }`, the block it puts into the clone and the key that toggles it. The drawer and
-// the overlay are one more entry each, not a change to the install.
+// addTo(layout) }`, the block it puts into the clone and the key that toggles it. The dock and
+// the drawer are an entry each; the overlay is one more entry, not a change to the install.
 //
 // `fs`: { exists(path), readText(path), writeText(path, text) (makes the folders),
 //         listFiles(dir) (relative paths with '/', recursive, sorted), remove(path) }.
@@ -23,6 +23,12 @@ export const MOD_NAME = 'herdr-session-stats';
 const DOCK_PX = 320;
 export const DOCK_BLOCK_ID = 'session-stats-dock';
 export const DOCK_KEY = 'ctrl-shift-s';
+
+// The drawer: a floating block over the root, on the right edge; only `DRAWER_PEEK_PX` of it
+// shows until it is hovered (herdr's `peek`).
+const DRAWER_PEEK_PX = 72;
+export const DRAWER_BLOCK_ID = 'session-stats-drawer';
+export const DRAWER_KEY = 'ctrl-shift-d';
 
 function findNode(node, id) {
   if (node.id === id) return node;
@@ -50,8 +56,21 @@ function addDock(layout) {
   return out;
 }
 
+// The drawer as a floating block of the root. A block that is already in the layout is left as
+// the developer has it; the root's other floating blocks stay.
+function addDrawer(layout) {
+  if (findNode(layout, DRAWER_BLOCK_ID)) return layout;
+  const out = structuredClone(layout);
+  out.floating = [
+    ...(out.floating ?? []),
+    { id: DRAWER_BLOCK_ID, content: { mod: MOD_NAME }, edge: 'right', align: 'center', peek: DRAWER_PEEK_PX },
+  ];
+  return out;
+}
+
 export const PRESENTATIONS = [
   { id: 'dock', blockId: DOCK_BLOCK_ID, key: DOCK_KEY, addTo: addDock },
+  { id: 'drawer', blockId: DRAWER_BLOCK_ID, key: DRAWER_KEY, addTo: addDrawer },
 ];
 
 // The keys of the presentations in the clone named `layoutName`: the key runs `layout.toggle`

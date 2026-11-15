@@ -29,4 +29,20 @@ describe('adapt the card list to its container', () => {
     expect(adapt({}).direction).toBe('vertical');
     expect(adapt().direction).toBe('vertical');
   });
+
+  test('drawer placement is a compact row', () => {
+    // the drawer floats on a side edge: each card is a compact row, listed vertically, with its
+    // key figures on the edge side, so on the right edge the row is mirrored
+    expect(adapt({ placement: floating('right') })).toEqual({ direction: 'vertical', compact: true, mirror: true });
+    expect(adapt({ placement: floating('left') })).toEqual({ direction: 'vertical', compact: true, mirror: false });
+    // the drawing never changes on hover: the app slides the drawer open, the mod draws one layout
+    expect(adapt({ placement: floating('right', { hovered: true, dragging: true }) })).toEqual(adapt({ placement: floating('right') }));
+  });
+
+  test('a docked column and a top or bottom edge keep the full card', () => {
+    for (const placement of [null, floating('top'), floating('bottom')]) {
+      expect(adapt({ placement })).toMatchObject({ compact: false, mirror: false });
+    }
+    expect(adapt({})).toMatchObject({ compact: false, mirror: false });
+  });
 });
