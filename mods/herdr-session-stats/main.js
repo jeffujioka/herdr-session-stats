@@ -6,15 +6,16 @@ import { View, div } from "gpui-kit";
 import { v_flex, h_flex } from "gpui-base";
 import { exec, home, panes, placement, props, readTextFile, spaces, theme } from "herdr";
 import { adapt } from "./adapt.js";
-import { agentPanes, createCardBuilder } from "./cards.js";
+import { agentPanes, createCardBuilder, panesOfActiveSpace } from "./cards.js";
 import { describeCard, formatCost, formatPercent } from "./format.js";
 import { REFRESH_INTERVAL_MS } from "./refresh.js";
 
-// The panes as `panes()` reports them, each with the machine of its space: the pane's tab
-// names the space it is in, and the space the machine.
+// The panes of the shown space as `panes()` reports them, each with the machine of its space:
+// the pane's tab names the space it is in, and the space the machine.
 function livePanes() {
-  const machineOfTab = new Map(spaces().flatMap((space) => space.tabs.map((tab) => [tab.id, space.machine])));
-  return panes().map((pane) => ({ ...pane, machine: machineOfTab.get(pane.tab) ?? null }));
+  const all = spaces();
+  const machineOfTab = new Map(all.flatMap((space) => space.tabs.map((tab) => [tab.id, space.machine])));
+  return panesOfActiveSpace(panes(), all).map((pane) => ({ ...pane, machine: machineOfTab.get(pane.tab) ?? null }));
 }
 
 // A full card. `roomy` is the overlay's: the same figures in larger type, the rows in two

@@ -1,6 +1,6 @@
 import { describe, expect, test } from 'bun:test';
 import { readFileSync } from 'node:fs';
-import { agentPanes, createCardBuilder } from '../src/cards.js';
+import { agentPanes, createCardBuilder, panesOfActiveSpace } from '../src/cards.js';
 import { describeCard, formatDuration } from '../src/format.js';
 import { parseCompactionConfig, sessionDirSlug } from '../src/providers/omp-sources.js';
 import { parseSessionFiles } from '../src/providers/session-files.js';
@@ -95,6 +95,29 @@ describe('cards', () => {
   test('cards keep the pane order', async () => {
     const { build } = builder(localWorld());
     const cards = await build([pane({ pane: 'a', cwd: '/x' }), pane({ pane: 'shell', app: null }), pane({ pane: 'b', cwd: '/y' })], NOW);
+    expect(cards.map((c) => c.id)).toEqual(['a', 'b']);
+  });
+
+  test("only the active space's panes get cards", async () => {
+    // herdr's spaces(): each with its tabs and `active`; a pane names its tab
+    const tab = (id) => ({ id });
+    const spaces = [
+      { id: 'sp1', active: false, machine: null, tabs: [tab('tb-other')] },
+      { id: 'sp2', active: true, machine: null, tabs: [tab('tb1'), tab('tb2')] },
+      { id: 'sp3', active: false, machine: 'box', tabs: [tab('tb-remote')] },
+    ];
+    const panes = [
+      pane({ pane: 'other', tab: 'tb-other' }),
+      pane({ pane: 'a', tab: 'tb1' }),
+      pane({ pane: 'b', tab: 'tb2', cwd: '/y' }),
+      pane({ pane: 'remote', tab: 'tb-remote', machine: 'box' }),
+    ];
+
+    expect(panesOfActiveSpace(panes, spaces).map((p) => p.pane)).toEqual(['a', 'b']);
+    expect(panesOfActiveSpace(panes, [])).toEqual([]);
+
+    const { build } = builder(localWorld());
+    const cards = await build(panesOfActiveSpace(panes, spaces), NOW);
     expect(cards.map((c) => c.id)).toEqual(['a', 'b']);
   });
 
