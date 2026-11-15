@@ -20,14 +20,14 @@ describe('three presentations of the one mod', () => {
   test('overlay uses the extra room', () => {
     // herdr gives the overlay's mod `props().overlay` (its id) and no placement
     expect(adapt({ placement: null, overlay: 'overlay-1' })).toEqual({ direction: 'vertical', roomy: true });
-    // the overlay is not a drawer, whatever the placement says
+    // the overlay draws roomy whatever the placement says
     expect(adapt({ placement: { edge: 'right', align: 'center', vertical: true, hovered: false, dragging: false }, overlay: 'o' })).toEqual({ direction: 'vertical', roomy: true });
     // outside an overlay nothing is roomy
     expect(adapt({ placement: null }).roomy).toBeUndefined();
   });
 });
 
-describe('the figures the drawer strip and the card share', () => {
+describe('the figures of the card', () => {
   test('percent and cost helpers read like the card', () => {
     expect(formatPercent(0.254)).toBe('25%');
     expect(formatPercent(NA)).toBe(NA);

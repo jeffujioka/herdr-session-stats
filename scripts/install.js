@@ -1,7 +1,8 @@
 // Installs the mod into a herdr home: syncs the mod folder, copies it, clones the active layout
-// as `<active>-stats` with the docked block and the drawer, and merges the three keys (f7 for
-// the dock, f8 for the drawer, f9 for the popup) into keys.json. All of the
-// logic is in src/install-lib.js; this is the command line over it, and node's files for it.
+// as `<active>-stats` with the docked block, merges the two keys (f8 for the dock, f9 for the
+// popup) into keys.json, and cleans up what the earlier installs wrote (the removed drawer).
+// All of the logic is in src/install-lib.js; this is the command line over it, and node's files
+// for it.
 //
 // Usage: bun scripts/install.js [--home <dir>]
 // The home is `--home`, else HERDR_APP_HOME, else ~/.config/herdr-app. The active layout is
@@ -61,9 +62,8 @@ function main() {
   console.log(`mod: ${report.mod.written.length} file(s) written, ${report.mod.removed.length} removed`);
   console.log(`layout ${report.layout.name}: ${report.layout.created ? 'created' : report.layout.changed ? 'completed' : 'already in place'}`);
   if (report.keys.copied.length > 0) console.log(`${report.keys.copied.length} key(s) of the layout you use copied into layout:${report.layout.name}`);
-  for (const k of report.keys.added) {
-    console.log(`key ${k.key} (${k.section}): ${k.action}${k.replaced ? ` (replaces ${k.replaced})` : ''}`);
-  }
+  for (const k of report.keys.removed) console.log(`key ${k.key} (${k.section}): removed ${k.action}, an earlier install's`);
+  for (const k of report.keys.added) console.log(`key ${k.key} (${k.section}): ${k.action}`);
   for (const c of report.keys.conflicts) {
     console.log(`not bound: ${c.key} is taken in ${c.section} by ${JSON.stringify(c.taken)}; the ${c.presentation} has no key`);
   }
