@@ -9,8 +9,9 @@
 // The data comes in as plain values and goes out as plain values: `build(panes, now,
 // onUpdate)` takes the panes (as `panes()` reports them, plus `machine`, the machine of the
 // pane's space) and resolves to cards `{ id, folder, branch, origin, harness, harnessName,
-// stats }`, where `stats` is what `readStats` returns. It never rejects: whatever cannot be
-// read for a pane shows as n/a on that pane's card, never as an empty window (D4).
+// status, focused, machine, stats }`, where `stats` is what `readStats` returns. It never
+// rejects: whatever cannot be read for a pane shows as n/a on that pane's card, never as an
+// empty window (D4).
 //
 // Panes resolve independently. `onUpdate(cards)` is called with the current cards each time
 // one pane finishes, so a slow machine delays only its own cards, and a pane still being
@@ -69,6 +70,23 @@ function groupsOf(agents) {
 }
 
 const NO_GIT = { branch: null, origin: null };
+
+// The card of a pane: what herdr says of the pane (its folder, live branch, harness, agent
+// status, focus and machine), the git facts of its folder and the stats of its session.
+function paneCard(pane, git, stats) {
+  return {
+    id: pane.pane,
+    folder: pane.cwd ?? null,
+    branch: pane.branch ?? git.branch,
+    origin: git.origin,
+    harness: pane.app,
+    harnessName: harnessName(pane.app),
+    status: pane.status ?? null,
+    focused: pane.focused === true,
+    machine: pane.machine ?? null,
+    stats,
+  };
+}
 
 export function createCardBuilder({ exec, readTextFile, home }) {
   // `exec` and `readTextFile` bound to a machine (null: this computer), `exec` with the timeout.
@@ -168,18 +186,7 @@ export function createCardBuilder({ exec, readTextFile, home }) {
       }
       stats = await reads.get(sessionPath);
     }
-    return {
-      sessionPath,
-      card: {
-        id: pane.pane,
-        folder: pane.cwd ?? null,
-        branch: pane.branch ?? git.branch,
-        origin: git.origin,
-        harness: pane.app,
-        harnessName: harnessName(pane.app),
-        stats,
-      },
-    };
+    return { sessionPath, card: paneCard(pane, git, stats) };
   }
 
   // pane id -> its last resolved { sessionPath, card }; ids being resolved; ids of the latest
@@ -228,14 +235,4 @@ export function createCardBuilder({ exec, readTextFile, home }) {
 }
 
 // A card for a pane whose resolution failed outright: its folder and n/a figures.
-function failedCard(pane) {
-  return {
-    id: pane.pane,
-    folder: pane.cwd ?? null,
-    branch: pane.branch ?? null,
-    origin: null,
-    harness: pane.app,
-    harnessName: harnessName(pane.app),
-    stats: unlinked(pane.app),
-  };
-}
+const failedCard = (pane) => paneCard(pane, NO_GIT, unlinked(pane.app));

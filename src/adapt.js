@@ -8,8 +8,9 @@
 // horizontally otherwise; a block in a layout is a side column, so its cards stack too.
 //
 // `overlay` is `props().overlay`, the id herdr gives a mod it opened as an overlay (a popup the
-// mod.json sizes larger than the default). The overlay is not docked: the cards stack as full
-// cards, and `roomy` (set only then) tells the mod to use the extra room.
+// mod.json sizes larger than the default). The overlay is not docked: the cards stack, and
+// `roomy` (set only then) tells the mod to use the extra room: the four detail groups of a
+// card go in two columns, where the docked column draws them one under the other.
 //
 // Returns `{ direction: 'vertical' | 'horizontal' }`, and `roomy: true` in an overlay.
 export function adapt({ placement = null, overlay = null } = {}) {

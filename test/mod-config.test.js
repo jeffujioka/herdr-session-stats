@@ -2,7 +2,8 @@ import { describe, expect, test } from 'bun:test';
 import { readFileSync } from 'node:fs';
 import { adapt } from '../src/adapt.js';
 import { NA } from '../src/providers/index.js';
-import { describeCard, formatCost, formatPercent } from '../src/format.js';
+import { cardModel } from '../src/card-model.js';
+import { formatCost, formatPercent } from '../src/format.js';
 
 const modJson = JSON.parse(readFileSync(new URL('../mods/herdr-session-stats/mod.json', import.meta.url), 'utf8'));
 
@@ -33,12 +34,11 @@ describe('the figures of the card', () => {
     expect(formatPercent(NA)).toBe(NA);
     expect(formatCost(1.5)).toBe('$1.50');
     expect(formatCost(NA)).toBe(NA);
-    // the card rows are built from the same helpers
-    // every other figure reads n/a
+    // the card model is built from the same helpers; every other figure reads n/a
     const known = { contextPercent: 0.25, contextMax: 200000, costUsd: 0.5 };
     const stats = new Proxy(known, { get: (target, key) => (key in target ? target[key] : NA) });
-    const rows = Object.fromEntries(describeCard({ folder: '/x', harnessName: 'omp', stats }).rows);
-    expect(rows.Context).toBe(`${formatPercent(0.25)}/200k`);
-    expect(rows.Cost).toBe(formatCost(0.5));
+    const [, context, spend] = cardModel({ folder: '/x', harnessName: 'omp', stats }, { home: '/h' }).groups;
+    expect(context.hero.value).toBe(formatPercent(0.25));
+    expect(spend.hero.value).toBe(formatCost(0.5));
   });
 });

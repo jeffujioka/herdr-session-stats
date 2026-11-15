@@ -1,7 +1,8 @@
 import { describe, expect, test } from 'bun:test';
 import { readFileSync } from 'node:fs';
 import { agentPanes, createCardBuilder, panesOfActiveSpace } from '../src/cards.js';
-import { describeCard, formatDuration } from '../src/format.js';
+import { cardModel } from '../src/card-model.js';
+import { formatDuration } from '../src/format.js';
 import { parseCompactionConfig, sessionDirSlug } from '../src/providers/omp-sources.js';
 import { parseSessionFiles } from '../src/providers/session-files.js';
 import { NA, readStats, registerProvider } from '../src/providers/index.js';
@@ -13,7 +14,7 @@ const ORIGIN = 'git@github.com:jeffujioka/herdr-session-stats.git';
 
 // A pane as herdr's panes() reports it, plus `machine` (the machine of its space; null here).
 function pane(overrides = {}) {
-  return { pane: 'p1', terminal: 't1', tab: 'tb1', title: 'omp', cwd: `${HOME}/work/app`, branch: 'main', status: 'idle', app: 'omp', machine: null, ...overrides };
+  return { pane: 'p1', terminal: 't1', tab: 'tb1', title: 'omp', cwd: `${HOME}/work/app`, branch: 'main', status: 'idle', app: 'omp', focused: false, machine: null, ...overrides };
 }
 
 // Stand-in with the exact signature of herdr's `exec(command, args, options)`, answering the
@@ -106,6 +107,18 @@ describe('cards', () => {
     const { build } = builder(localWorld());
     const cards = await build([pane({ pane: 'a', cwd: '/x' }), pane({ pane: 'shell', app: null }), pane({ pane: 'b', cwd: '/y' })], NOW);
     expect(cards.map((c) => c.id)).toEqual(['a', 'b']);
+  });
+
+  test("a card carries its pane's status, focus and machine", async () => {
+    const { build } = builder(localWorld());
+    const [working, focused] = await build([pane({ pane: 'a', status: 'working' }), pane({ pane: 'b', terminal: 't2', cwd: '/y', status: 'blocked', focused: true })], NOW);
+    expect(working).toMatchObject({ status: 'working', focused: false, machine: null });
+    expect(focused).toMatchObject({ status: 'blocked', focused: true });
+
+    // also the card of a pane on a machine that cannot be reached
+    const down = builder(localWorld(), { unreachable: ['bs'] });
+    const [remote] = await down.build([pane({ machine: 'bs', status: 'done', focused: true })], NOW);
+    expect(remote).toMatchObject({ status: 'done', focused: true, machine: 'bs' });
   });
 
   test("only the active space's panes get cards", async () => {
@@ -232,10 +245,10 @@ describe('cards', () => {
     expect(seen[0]).not.toHaveProperty('now');
     expect(seen[1].file.path).toBe(`${HOME}/work/app/acme.log`);
     // the card has the figures the provider gave; the rest read n/a
-    const rows = Object.fromEntries(describeCard(card).rows);
-    expect(rows.Model).toBe('acme-1');
-    expect(rows.Tokens).toBe('1k');
-    expect(rows.Cost).toBe(NA);
+    const m = cardModel(card, { home: HOME });
+    expect(m.groups[0].model.value).toBe('acme-1');
+    expect(m.groups[2].figures.find((f) => f.label === 'Tokens').value).toBe('1k');
+    expect(m.groups[2].hero.value).toBe(NA);
     // no omp or Claude Code program was run for it
     expect(calls.map((c) => c.command).filter((command) => command === 'find' || command === 'tail' || command === 'sqlite3')).toEqual([]);
 
@@ -445,72 +458,11 @@ describe('session folder', () => {
 });
 
 describe('card text', () => {
-  const stats = { ...readStats('', null, NOW), harness: 'omp' };
-
   test('durations', () => {
     expect(formatDuration(12_000)).toBe('12s');
     expect(formatDuration(90_000)).toBe('1m 30s');
     expect(formatDuration(3_900_000)).toBe('1h 05m');
     expect(formatDuration(450)).toBe('450ms');
     expect(formatDuration(NA)).toBe(NA);
-  });
-
-  test('an unlinked card shows the place and n/a for every figure', () => {
-    const lines = describeCard({ id: 'p1', folder: '/work/app', branch: 'main', origin: ORIGIN, harness: 'omp', harnessName: 'omp', stats });
-    expect(lines.title).toBe('omp');
-    expect(lines.place).toEqual(['/work/app', 'main', ORIGIN]);
-    expect(lines.rows.every(([, value]) => value === NA)).toBe(true);
-  });
-
-  test('missing git leaves out the branch and origin lines', () => {
-    const lines = describeCard({ id: 'p1', folder: '/work/app', branch: null, origin: null, harness: 'omp', harnessName: 'omp', stats });
-    expect(lines.place).toEqual(['/work/app']);
-  });
-
-  test('figures are formatted', () => {
-    const full = {
-      ...stats,
-      model: 'claude-sonnet-5.5-1m',
-      durationMs: 1_800_000,
-      totalTokens: 60_000,
-      contextPercent: 0.25,
-      contextMax: 200_000,
-      headroomTokens: 120_000,
-      autocompactions: 2,
-      cacheHitRate: 0.8,
-      cacheHits: 3,
-      cacheMisses: 2,
-      cacheLeftMs: 180_000,
-      costUsd: 0.5,
-      burnCostPerHour: 2,
-      burnTokensPerMin: 2000,
-      sinceActivityMs: 90_000,
-      latencyMs: 12_000,
-      thinkingLevel: 'medium',
-      premiumRequests: 7,
-    };
-    const rows = Object.fromEntries(describeCard({ id: 'p1', folder: '/w', branch: null, origin: null, harness: 'omp', harnessName: 'omp', stats: full }).rows);
-    expect(rows).toEqual({
-      Model: 'claude-sonnet-5.5-1m',
-      Duration: '30m 00s',
-      Tokens: '60k',
-      Context: '25%/200k',
-      Headroom: '120k',
-      Compactions: '2',
-      'Cache hit': '80% (3 hit, 2 miss)',
-      'Cache left': '3m 00s',
-      Cost: '$0.50',
-      Burn: '$2.00/h, 2k tok/min',
-      Activity: '1m 30s ago',
-      Latency: '12s',
-      Thinking: 'medium',
-      Premium: '7',
-    });
-    expect(Object.keys(rows).length).toBe(14);
-  });
-
-  test('a cold cache reads cold', () => {
-    const rows = Object.fromEntries(describeCard({ id: 'p', folder: '/w', branch: null, origin: null, harness: 'omp', harnessName: 'omp', stats: { ...stats, cacheLeftMs: 0 } }).rows);
-    expect(rows['Cache left']).toBe('cold');
   });
 });
