@@ -11,6 +11,9 @@ let dir;
 let root;
 let home;
 
+// the mod's real mod.json
+const MOD_JSON = readFileSync(new URL('../mods/herdr-session-stats/mod.json', import.meta.url), 'utf8');
+
 const read = (path) => readFileSync(path, 'utf8');
 const readJson = (path) => JSON.parse(read(path));
 const put = (path, text) => {
@@ -72,7 +75,7 @@ beforeEach(() => {
   home = join(dir, 'home');
   // the mod as sync leaves it: its own files, the copied modules, and what the app generates
   put(join(root, 'mods', MOD_NAME, 'main.js'), '// main\n');
-  put(join(root, 'mods', MOD_NAME, 'mod.json'), '{ "place": "right", "size": 320 }\n');
+  put(join(root, 'mods', MOD_NAME, 'mod.json'), MOD_JSON);
   put(join(root, 'mods', MOD_NAME, 'cards.js'), '// cards\n');
   put(join(root, 'mods', MOD_NAME, 'providers', 'index.js'), '// registry\n');
   put(join(root, 'mods', MOD_NAME, 'jsconfig.json'), '{ "repo": true }\n');
@@ -91,12 +94,19 @@ describe('install into herdr', () => {
     put(join(home, 'mods', MOD_NAME, 'main.js'), '// old main\n');
     put(join(home, 'mods', MOD_NAME, 'jsconfig.json'), '{ "app": true }\n');
     put(join(home, 'mods', MOD_NAME, 'gpui-kit.d.ts'), '// app copy\n');
+    put(join(home, 'mods', MOD_NAME, '.cache', 'state'), 'app\n');
+    put(join(home, 'mods', MOD_NAME, 'node_modules', 'dep', 'index.js'), '// dep\n');
+    put(join(root, 'mods', MOD_NAME, '.DS_Store'), 'finder\n');
 
     const report = run();
 
     const copy = join(home, 'mods', MOD_NAME);
+    // hidden files and node_modules are not the mod's: not copied, not removed
+    expect(read(join(copy, '.cache', 'state'))).toBe('app\n');
+    expect(read(join(copy, 'node_modules', 'dep', 'index.js'))).toBe('// dep\n');
+    expect(Object.keys(snapshot(copy))).not.toContain('.DS_Store');
     expect(read(join(copy, 'main.js'))).toBe('// main\n');
-    expect(read(join(copy, 'mod.json'))).toBe('{ "place": "right", "size": 320 }\n');
+    expect(read(join(copy, 'mod.json'))).toBe(MOD_JSON);
     expect(read(join(copy, 'cards.js'))).toBe('// cards\n');
     expect(read(join(copy, 'providers', 'index.js'))).toBe('// registry\n');
     // the mod is a mirror: a file it no longer has goes, so the app never loads a stale module
@@ -133,27 +143,31 @@ describe('install into herdr', () => {
     expect(read(join(home, 'layouts', 'main-stats.json'))).toBe(`${JSON.stringify(clone, null, 2)}\n`);
   });
 
-  test('puts a column root into a row with the dock beside it', () => {
-    const column = { id: 'root', type: 'column', titlebar: 'none', gap: 4, children: [{ id: 'tabs', type: 'block', content: { mod: 'tabs' } }] };
+  test('refuses a root that is not a row, and writes nothing', () => {
+    const column = { id: 'root', type: 'column', children: [{ id: 'tabs', type: 'block', content: { mod: 'tabs' } }] };
     put(join(home, 'layouts', 'main.json'), `${JSON.stringify(column, null, 2)}\n`);
+    const before = snapshot(home);
 
-    run();
+    expect(() => run()).toThrow(/column root/);
 
-    const clone = readJson(join(home, 'layouts', 'main-stats.json'));
-    expect(clone.type).toBe('row');
-    expect(clone.id).toBe('root');
-    expect(clone.titlebar).toBe('none'); // root-only settings stay on the root
-    expect(clone.children).toHaveLength(2);
-    // the developer's column is whole, with its own look, and keeps all the room
-    const [body, dock] = clone.children;
-    expect(body).toMatchObject({ type: 'column', gap: 4, children: column.children });
-    expect(dock.content).toEqual({ mod: MOD_NAME });
-    expect(new Set(ids(clone)).size).toBe(ids(clone).length);
+    expect(snapshot(home)).toEqual(before);
+  });
+
+  test('the mod docks nowhere by itself', () => {
+    // herdr docks a new mod folder into the SHOWN layout from its mod.json `place`; that would
+    // edit the developer's own layout, so the mod asks for no place and only the clone holds it
+    expect(JSON.parse(MOD_JSON).place).toBe('none');
   });
 
   test('merges keys and reports conflicts', () => {
-    // one of the developer's bindings is on the key the install wants
-    const taken = { ...KEYS, global: { ...KEYS.global, 'ctrl-shift-s': 'tab.new' } };
+    // one of the developer's bindings is on the key the install wants; the layout they use has
+    // two keys of its own, and the clone already has a binding of its own on one of them
+    const taken = {
+      ...KEYS,
+      'layout:main': { ...KEYS['layout:main'], 'cmd-shift-g': 'review-toggle.gitlab' },
+      'layout:main-stats': { 'cmd-shift-r': 'mine.own' },
+      global: { ...KEYS.global, 'ctrl-shift-s': 'tab.new' },
+    };
     put(join(home, 'keys.json'), `${JSON.stringify(taken, null, 2)}\n`);
 
     const report = run();
@@ -168,6 +182,11 @@ describe('install into herdr', () => {
     ]);
     expect(report.keys.added).toEqual([]);
     expect(JSON.stringify(keys)).not.toContain('session-stats-dock');
+    // the keys of the layout the developer uses work in the clone too (a section applies only
+    // while its layout shows): copied into the clone's section, where a key it already has stays
+    expect(keys['layout:main']).toEqual(taken['layout:main']);
+    expect(keys['layout:main-stats']).toEqual({ 'cmd-shift-r': 'mine.own', 'cmd-shift-g': 'review-toggle.gitlab' });
+    expect(report.keys.copied).toEqual([{ key: 'cmd-shift-g', action: 'review-toggle.gitlab' }]);
   });
 
   test('a key taken in the layout section or the terminal section is a conflict too', () => {
@@ -192,7 +211,7 @@ describe('install into herdr', () => {
     expect(read(join(home, 'keys.json'))).toBe(keysFirst);
     expect(report.mod).toEqual({ written: [], removed: [] });
     expect(report.layout).toMatchObject({ name: 'main-stats', created: false, changed: false });
-    expect(report.keys).toEqual({ added: [], conflicts: [] });
+    expect(report.keys).toEqual({ added: [], copied: [], conflicts: [] });
   });
 
   test('a run from the clone itself does not clone the clone', () => {
@@ -238,7 +257,8 @@ describe('three presentations of the one mod', () => {
     const keys = readJson(join(home, 'keys.json'));
     const clone = readJson(join(home, 'layouts', 'main-stats.json'));
     // the key runs layout.toggle on the id of the block the clone holds, and only in that layout
-    const bound = Object.entries(keys['layout:main-stats']);
+    // (the developer's own keys for the layout are copied beside it)
+    const bound = Object.entries(keys['layout:main-stats']).filter(([, a]) => a.startsWith('layout.toggle'));
     expect(bound).toHaveLength(1);
     const [key, action] = bound[0];
     expect(key).toBe('ctrl-shift-s');
