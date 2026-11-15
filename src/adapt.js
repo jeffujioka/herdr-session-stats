@@ -10,9 +10,17 @@
 // A floating mod on a side edge is the drawer: each card is a compact row, whose key figures sit
 // on the edge side (that is what shows while the drawer peeks), so on the right edge the row is
 // mirrored. The choice ignores `hovered` and `dragging`: the app slides the drawer open, the
-// mod draws one layout. Returns `{ direction: 'vertical' | 'horizontal', compact, mirror }`:
-// the way the cards are listed, whether each is a compact row, and whether the row is mirrored.
-export function adapt({ placement = null } = {}) {
+// mod draws one layout.
+//
+// `overlay` is `props().overlay`, the id herdr gives a mod it opened as an overlay (a popup the
+// mod.json sizes larger than the default). The overlay is neither docked nor a drawer: the cards
+// stack as full cards, and `roomy` (set only then) tells the mod to use the extra room.
+//
+// Returns `{ direction: 'vertical' | 'horizontal', compact, mirror }`, and `roomy: true` in an
+// overlay: the way the cards are listed, whether each is a compact row, whether the row is
+// mirrored, and whether the full card spreads over the room of an overlay.
+export function adapt({ placement = null, overlay = null } = {}) {
+  if (overlay) return { direction: 'vertical', compact: false, mirror: false, roomy: true };
   const compact = Boolean(placement?.vertical);
   return {
     direction: placement && !placement.vertical ? 'horizontal' : 'vertical',

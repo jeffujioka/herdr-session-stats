@@ -9,12 +9,22 @@ export function formatTokens(tokens) {
   return thousands < 1e3 ? `${thousands}k` : `${+(tokens / 1e6).toFixed(1)}M`;
 }
 
+// A share of 1 as the card writes a percent: 0.25 is "25%". Takes a number or 'n/a'.
+export function formatPercent(share) {
+  return share === NA ? NA : `${Math.round(share * 100)}%`;
+}
+
+// A cost in dollars as the card writes it: "$1.50". Takes a number or 'n/a'.
+export function formatCost(usd) {
+  return usd === NA ? NA : `$${usd.toFixed(2)}`;
+}
+
 // Context as usage percent over the maximum window, "25%/200k". Without the maximum nothing
 // can be shown, so it reads 'n/a'; with the maximum but no usage it reads "n/a of 200k".
 export function formatContext({ contextPercent, contextMax }) {
   if (contextMax === NA) return NA;
   if (contextPercent === NA) return `${NA} of ${formatTokens(contextMax)}`;
-  return `${Math.round(contextPercent * 100)}%/${formatTokens(contextMax)}`;
+  return `${formatPercent(contextPercent)}/${formatTokens(contextMax)}`;
 }
 
 // Text of a duration: "450ms", "12s", "1m 30s", "1h 05m". Takes a number or 'n/a'.
@@ -34,7 +44,7 @@ const via = (value, format) => (value === NA ? NA : format(value));
 // origin when it has them) and its `[label, value]` rows. A figure that cannot be read is 'n/a'.
 export function describeCard({ folder, branch, origin, harnessName, stats }) {
   const hasCounts = stats.cacheHits !== NA && stats.cacheMisses !== NA;
-  const rate = via(stats.cacheHitRate, (r) => `${Math.round(r * 100)}%`);
+  const rate = formatPercent(stats.cacheHitRate);
   const burn =
     stats.burnCostPerHour === NA && stats.burnTokensPerMin === NA
       ? NA
@@ -51,7 +61,7 @@ export function describeCard({ folder, branch, origin, harnessName, stats }) {
       ['Compactions', via(stats.autocompactions, String)],
       ['Cache hit', hasCounts ? `${rate} (${stats.cacheHits} hit, ${stats.cacheMisses} miss)` : rate],
       ['Cache left', via(stats.cacheLeftMs, (ms) => (ms === 0 ? 'cold' : formatDuration(ms)))],
-      ['Cost', via(stats.costUsd, (c) => `$${c.toFixed(2)}`)],
+      ['Cost', formatCost(stats.costUsd)],
       ['Burn', burn],
       ['Activity', via(stats.sinceActivityMs, (ms) => `${formatDuration(ms)} ago`)],
       ['Latency', formatDuration(stats.latencyMs)],
