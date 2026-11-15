@@ -9,7 +9,7 @@
 // The data comes in as plain values and goes out as plain values: `build(panes, now,
 // onUpdate)` takes the panes (as `panes()` reports them, plus `machine`, the machine of the
 // pane's space) and resolves to cards `{ id, folder, branch, origin, harness, harnessName,
-// status, focused, machine, stats }`, where `stats` is what `readStats` returns. It never
+// title, status, focused, machine, stats }`, where `stats` is what `readStats` returns. It never
 // rejects: whatever cannot be read for a pane shows as n/a on that pane's card, never as an
 // empty window (D4).
 //
@@ -81,6 +81,7 @@ function paneCard(pane, git, stats) {
     origin: git.origin,
     harness: pane.app,
     harnessName: harnessName(pane.app),
+    title: pane.title ?? null,
     status: pane.status ?? null,
     focused: pane.focused === true,
     machine: pane.machine ?? null,

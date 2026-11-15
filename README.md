@@ -12,7 +12,7 @@ refreshed every 2 seconds from read-only reads of the harness's own session file
 
 | Group | Shows |
 | --- | --- |
-| Identity | a dot in the agent's status color (working, blocked, done, idle), the folder's name and the status word; the path (home as `~`); the git branch and remote (`github.com/org/repo`) and, for a pane on another machine, the machine; the harness and the model |
+| Identity | a dot in the agent's status color (working, blocked, done, idle), the folder's name and the status word; the session's title (the pane's title; for omp without the `π > ` prefix omp puts on it; no line for an untitled session, whose title is the folder's name), which tells apart two cards of one folder; the path (home as `~`); the git branch and remote (`github.com/org/repo`) and, for a pane on another machine, the machine; the harness and the model |
 | Context | the usage as a percent of the model's window, in a gauge with a tick at the point where the harness autocompacts; tokens used, tokens left before compaction, compactions recorded |
 | Spend | the cost the harness logged (there is no price table), cost per hour, tokens used by the session, tokens per minute |
 | Cache | the time until the prompt cache is cold (`cold` once it is), and the hit rate with the turns that hit and missed it |

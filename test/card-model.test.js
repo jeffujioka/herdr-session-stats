@@ -36,6 +36,7 @@ function card(overrides = {}, stats = {}) {
     origin: 'https://github.com/jeffujioka/dotfiles.git',
     harness: 'omp',
     harnessName: 'omp',
+    title: 'π > Fix the login bug',
     status: 'working',
     focused: false,
     machine: null,
@@ -59,6 +60,7 @@ describe('a card groups its figures', () => {
     expect(group(m, 'identity')).toMatchObject({
       status: { tone: 'working', label: 'working' },
       name: { value: 'jeffujioka' },
+      session: { value: 'Fix the login bug' },
       path: { value: '~/projects/jeffujioka' },
       branch: 'main',
       remote: 'github.com/jeffujioka/dotfiles',
@@ -96,6 +98,21 @@ describe('a card groups its figures', () => {
       Thinking: 'medium',
       Premium: '14',
     });
+
+    // the session title: the pane's title without the harness prefix, so two cards of one
+    // folder can be told apart; none when the session is untitled (its title is the folder's name)
+    const session = (title, overrides) => group(model({ title, ...overrides }), 'identity').session;
+    expect(session('π > Fix the login bug')).toEqual({ value: 'Fix the login bug', tone: 'normal' });
+    expect(session('π > \uE0A0 Fix the login bug').value).toBe('\uE0A0 Fix the login bug');
+    expect(session('\uE0A0 Fix the login bug').value).toBe('\uE0A0 Fix the login bug');
+    expect(session('π > jeffujioka')).toBeNull();
+    expect(session('jeffujioka')).toBeNull();
+    expect(session('π >  ')).toBeNull();
+    expect(session(null)).toBeNull();
+    // another harness: the title as it is, unless it is the folder's name
+    expect(session('Refactor the parser', { harness: 'claude-code' }).value).toBe('Refactor the parser');
+    expect(session('π > Refactor', { harness: 'claude-code' }).value).toBe('π > Refactor');
+    expect(session('jeffujioka', { harness: 'claude-code' })).toBeNull();
   });
 
   test('a card of the focused pane says so', () => {
@@ -198,7 +215,7 @@ describe('agent status colors the card dot', () => {
 describe('unknown figures are dimmed', () => {
   // every `{ value, tone }` of a model, wherever it sits
   const toned = (m) =>
-    m.groups.flatMap((g) => [g.name, g.path, g.harness, g.model, g.hero, ...(g.figures ?? [])]).filter(Boolean);
+    m.groups.flatMap((g) => [g.name, g.session, g.path, g.harness, g.model, g.hero, ...(g.figures ?? [])]).filter(Boolean);
 
   test('unknown figures are dimmed', () => {
     // a card with no session: every figure reads n/a, and every one of them is dim

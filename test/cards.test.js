@@ -112,7 +112,7 @@ describe('cards', () => {
   test("a card carries its pane's status, focus and machine", async () => {
     const { build } = builder(localWorld());
     const [working, focused] = await build([pane({ pane: 'a', status: 'working' }), pane({ pane: 'b', terminal: 't2', cwd: '/y', status: 'blocked', focused: true })], NOW);
-    expect(working).toMatchObject({ status: 'working', focused: false, machine: null });
+    expect(working).toMatchObject({ title: 'omp', status: 'working', focused: false, machine: null });
     expect(focused).toMatchObject({ status: 'blocked', focused: true });
 
     // also the card of a pane on a machine that cannot be reached
