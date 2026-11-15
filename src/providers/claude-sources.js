@@ -23,9 +23,9 @@ export function createClaudeSessions({ execOn }) {
   return {
     // The session file the pane's folder links to (`{ path, mtimeMs, size }`), or null. Only
     // the files directly in the folder are sessions; the folders beside them hold sub-agent data.
-    link({ machine, cwd, home, os, now }) {
+    link({ machine, cwd, home, os }) {
       const dir = `${home}/.claude/projects/${sessionDirSlug(cwd)}`;
-      return findSessionFile(execOn(machine), { dir, os, now });
+      return findSessionFile(execOn(machine), { dir, os });
     },
 
     // The `input` of `readStats('claude-code', input, now)` for a linked file: its tail window,

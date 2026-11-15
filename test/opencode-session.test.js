@@ -200,8 +200,9 @@ describe('opencode session link', () => {
     expect(file.mtimeMs).toBe(T0 + 520000);
     // a folder with a trailing slash is the same folder
     expect((await link('/work/demo/', T0 + 530000)).path).toBe('ses_basic');
-    // too old for the link window, an unknown folder, a quote in the name
-    expect(await link('/work/demo', T0 + 520000 + 6 * 60 * 1000)).toBeNull();
+    // an idle session is still the folder's session, however long ago it changed
+    expect((await link('/work/demo', T0 + 520000 + 6 * 60 * 1000)).path).toBe('ses_basic');
+    // an unknown folder, a quote in the name
     expect(await link('/work/nowhere', T0 + 530000)).toBeNull();
     expect(await link("/work/o'brien", T0 + 530000)).toBeNull();
   });
