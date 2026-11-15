@@ -58,7 +58,7 @@ function ids(node) {
 }
 function find(node, id) {
   if (node.id === id) return node;
-  for (const child of node.children ?? []) {
+  for (const child of [...(node.children ?? []), ...(node.floating ?? [])]) {
     const hit = find(child, id);
     if (hit) return hit;
   }
@@ -128,11 +128,12 @@ describe('install into herdr', () => {
     expect(report.layout).toMatchObject({ name: 'main-stats', created: true, changed: true });
 
     const clone = readJson(join(home, 'layouts', 'main-stats.json'));
-    // everything the developer had is still there, the docked block is one more right-hand
-    // column at the top level of the row
-    const { children, ...rest } = clone;
+    // everything the developer had is still there: the docked block is one more right-hand
+    // column at the top level of the row, and the drawer floats over the root
+    const { children, floating, ...rest } = clone;
     expect(children.slice(0, 2)).toEqual(ACTIVE.children);
     expect(children).toHaveLength(3);
+    expect(floating).toHaveLength(1);
     expect(rest).toEqual({ ...ACTIVE, children: undefined });
     const dock = children[2];
     expect(dock.type).toBe('block');
@@ -180,12 +181,16 @@ describe('install into herdr', () => {
     expect(report.keys.conflicts).toEqual([
       expect.objectContaining({ presentation: 'dock', key: 'ctrl-shift-s', section: 'global', taken: 'tab.new' }),
     ]);
-    expect(report.keys.added).toEqual([]);
+    expect(report.keys.added.map((b) => b.presentation)).toEqual(['drawer']);
     expect(JSON.stringify(keys)).not.toContain('session-stats-dock');
     // the keys of the layout the developer uses work in the clone too (a section applies only
     // while its layout shows): copied into the clone's section, where a key it already has stays
     expect(keys['layout:main']).toEqual(taken['layout:main']);
-    expect(keys['layout:main-stats']).toEqual({ 'cmd-shift-r': 'mine.own', 'cmd-shift-g': 'review-toggle.gitlab' });
+    expect(keys['layout:main-stats']).toEqual({
+      'cmd-shift-r': 'mine.own',
+      'cmd-shift-g': 'review-toggle.gitlab',
+      'ctrl-shift-d': 'layout.toggle:session-stats-drawer',
+    });
     expect(report.keys.copied).toEqual([{ key: 'cmd-shift-g', action: 'review-toggle.gitlab' }]);
   });
 
@@ -258,17 +263,61 @@ describe('three presentations of the one mod', () => {
     const clone = readJson(join(home, 'layouts', 'main-stats.json'));
     // the key runs layout.toggle on the id of the block the clone holds, and only in that layout
     // (the developer's own keys for the layout are copied beside it)
-    const bound = Object.entries(keys['layout:main-stats']).filter(([, a]) => a.startsWith('layout.toggle'));
-    expect(bound).toHaveLength(1);
-    const [key, action] = bound[0];
-    expect(key).toBe('ctrl-shift-s');
+    const action = keys['layout:main-stats']['ctrl-shift-s'];
+    const key = 'ctrl-shift-s';
     const [command, id] = action.split(':');
     expect(command).toBe('layout.toggle');
     expect(ids(clone).filter((x) => x === id)).toHaveLength(1);
+    expect(find(clone, id).type).toBe('block');
     expect(find(clone, id).content).toEqual({ mod: MOD_NAME });
     expect(keys.global['ctrl-shift-s']).toBeUndefined();
-    expect(report.keys.added).toEqual([expect.objectContaining({ presentation: 'dock', key, section: 'layout:main-stats', action })]);
+    expect(report.keys.added).toContainEqual(expect.objectContaining({ presentation: 'dock', key, section: 'layout:main-stats', action }));
     expect(report.keys.conflicts).toEqual([]);
+  });
+
+  test('drawer is a floating peek block', () => {
+    run();
+
+    const clone = readJson(join(home, 'layouts', 'main-stats.json'));
+    // a floating block over the root, on a side edge, with a peek width; it names the mod and
+    // does not ask to start hidden
+    expect(clone.floating).toHaveLength(1);
+    const [drawer] = clone.floating;
+    expect(drawer.content).toEqual({ mod: MOD_NAME });
+    expect(drawer.edge).toBe('right');
+    expect(drawer.peek).toBeGreaterThan(0);
+    expect(drawer.hidden).toBeUndefined();
+    // its id is its own: not the docked block's
+    expect(ids(clone).filter((x) => x === drawer.id)).toHaveLength(1);
+    expect(drawer.id).not.toBe('session-stats-dock');
+    // the developer's layout is not the one that holds it
+    expect(readJson(join(home, 'layouts', 'main.json')).floating).toBeUndefined();
+  });
+
+  test('drawer key toggles drawer block', () => {
+    const report = run();
+
+    const keys = readJson(join(home, 'keys.json'));
+    const clone = readJson(join(home, 'layouts', 'main-stats.json'));
+    const [drawer] = clone.floating;
+    // the drawer's key runs layout.toggle on the drawer's block id, in the clone's section only
+    const key = 'ctrl-shift-d';
+    expect(keys['layout:main-stats'][key]).toBe(`layout.toggle:${drawer.id}`);
+    expect(keys.global[key]).toBeUndefined();
+    expect(report.keys.added).toContainEqual(
+      expect.objectContaining({ presentation: 'drawer', key, section: 'layout:main-stats', action: `layout.toggle:${drawer.id}` }),
+    );
+    expect(report.keys.conflicts).toEqual([]);
+  });
+
+  test('a drawer key that is taken is reported, the dock key still goes in', () => {
+    put(join(home, 'keys.json'), `${JSON.stringify({ ...KEYS, global: { ...KEYS.global, 'ctrl-shift-d': 'tab.new' } }, null, 2)}\n`);
+
+    const report = run();
+
+    expect(report.keys.conflicts).toEqual([expect.objectContaining({ presentation: 'drawer', key: 'ctrl-shift-d', section: 'global', taken: 'tab.new' })]);
+    expect(report.keys.added.map((b) => b.presentation)).toEqual(['dock']);
+    expect(readJson(join(home, 'keys.json')).global['ctrl-shift-d']).toBe('tab.new');
   });
 });
 
