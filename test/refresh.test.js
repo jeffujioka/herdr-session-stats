@@ -28,6 +28,22 @@ function bigSession() {
   return `${lines.join('\n')}\n`;
 }
 
+// A session a little over one scan block, whose first block ends two bytes into a 4-byte
+// character of its third line, with a compaction at the start and one at the end.
+function cutSession() {
+  const head = [entry({ type: 'session', id: 's', timestamp: new Date(NOW - 60 * 60_000).toISOString() }), compaction('c1')];
+  const note = '{"type":"custom","note":"';
+  const prefix = Buffer.byteLength(head.join('\n')) + 1;
+  const lines = [...head, `${note}${'n'.repeat(SCAN_CHUNK_BYTES - 2 - prefix - note.length)}😀"}`];
+  let size = SCAN_CHUNK_BYTES;
+  for (let i = 0; size < SCAN_CHUNK_BYTES + 200_000; i++) {
+    lines.push(message('user', i % 50));
+    size += lines.at(-1).length + 1;
+  }
+  lines.push(compaction('c2'));
+  return `${lines.join('\n')}\n`;
+}
+
 const file = (text, mtimeMs = 1000) => ({ path: PATH, mtimeMs, size: Buffer.byteLength(text) });
 const newReader = (exec) => createSessionReader({ exec, fold: ompProvider.fold });
 // the autocompactions of a read, which is what the whole-file count shows as
@@ -102,7 +118,7 @@ describe('refresh', () => {
     expect(await counted(reader, file(grown, 2000))).toBe(3);
   });
 
-  test('a failed incremental read recounts from the start', async () => {
+  test('a failed incremental read goes on from where the scan stood', async () => {
     let text = bigSession();
     const files = new Map([[PATH, text]]);
     const faults = {};
@@ -159,6 +175,84 @@ describe('refresh', () => {
     const { exec } = fakeExec(new Map([[PATH, text]]), { ddReport: 'bsd' });
 
     expect(await counted(newReader(exec), file(text))).toBe(2);
+  });
+
+  test("dd's report is read whatever its wording or the size of the block", async () => {
+    const text = bigSession();
+    const wordings = [
+      (n) => `${n} Bytes (${n} B) copiert, 0,001 s, 1,0 MB/s`,
+      (n) => `${n} octets (${n} o) copiés, 0,001 s, 1,0 Mo/s`,
+      (n) => (n === 1 ? '1 byte copied, 0.001 s, 1.0 kB/s' : `${n} bytes copied, 0.001 s, 1.0 kB/s`),
+    ];
+    for (const ddReport of wordings) {
+      const { exec } = fakeExec(new Map([[PATH, text]]), { ddReport });
+      expect(await counted(newReader(exec), file(text))).toBe(2);
+    }
+
+    // a last block of one byte: the file is one chunk and a newline long
+    const bytes = Buffer.concat([Buffer.from(text), Buffer.from('\n'.repeat(SCAN_CHUNK_BYTES + 1 - Buffer.byteLength(text)))]);
+    expect(bytes.length).toBe(SCAN_CHUNK_BYTES + 1);
+    const { exec, calls } = fakeExec(new Map([[PATH, bytes]]), { ddReport: wordings[2] });
+    expect(await counted(newReader(exec), { path: PATH, mtimeMs: 1000, size: bytes.length })).toBe(2);
+    expect(calls.filter((call) => call.command === 'dd')).toHaveLength(2);
+  });
+
+  test('a tail that cannot be read keeps the totals of the scan', async () => {
+    let text = bigSession();
+    const files = new Map([[PATH, text]]);
+    const faults = {};
+    const { exec, calls } = fakeExec(files, faults);
+    const reader = newReader(exec);
+    await reader.read(file(text));
+
+    text += `${compaction('c3')}\n`;
+    files.set(PATH, text);
+    faults.fail = (call) => call.command === 'tail' && call.args[1] === String(TAIL_BYTES);
+    const stats = readStats('omp', await reader.read(file(text, 2000)), NOW);
+    // the figures about the end of the file are n/a for this refresh, the totals are not lost
+    expect(stats.model).toBe(NA);
+    expect(stats.autocompactions).toBe(3);
+
+    faults.fail = null;
+    expect(await counted(reader, file(text, 3000))).toBe(3);
+    expect(calls.filter((call) => call.command === 'dd')).toHaveLength(1);
+  });
+
+  test('more appended than one read takes goes on in blocks from where the scan ended', async () => {
+    // a character of the first line cut by the first block, so the block that holds the end of
+    // the scan starts inside one
+    const session = cutSession();
+    const bytes0 = Buffer.from(session);
+    expect(bytes0[SCAN_CHUNK_BYTES] & 0xc0).toBe(0x80);
+    const files = new Map([[PATH, bytes0]]);
+    const { exec, calls } = fakeExec(files);
+    const reader = newReader(exec);
+    expect(await counted(reader, file(session))).toBe(2);
+
+    // over a chunk appended, with a compaction at each end
+    const appended = `${compaction('c3')}\n${`${message('user', 3)}\n`.repeat(Math.ceil((SCAN_CHUNK_BYTES + 100_000) / 2100))}${compaction('c4')}\n`;
+    const grown = Buffer.concat([bytes0, Buffer.from(appended)]);
+    files.set(PATH, grown);
+    const mark = calls.length;
+    expect(await counted(reader, { path: PATH, mtimeMs: 2000, size: grown.length })).toBe(4);
+    // not from the start: from the block that holds the end of the first scan
+    const blocks = calls.slice(mark).filter((call) => call.command === 'dd').map((call) => call.args[2]);
+    expect(blocks).toEqual(['skip=1', 'skip=2']);
+  });
+
+  test('a last line cut inside a character is counted once it is whole', async () => {
+    // the unfinished line is measured too long, so the position of the scan is off and the next
+    // read finds that out and scans again: the count is right either way
+    const whole = Buffer.from(`${entry({ type: 'compaction', id: 'c3', summary: 'é' })}\n`);
+    const cut = whole.indexOf(0xc3) + 1;
+    const base = Buffer.from(bigSession());
+    const files = new Map([[PATH, Buffer.concat([base, whole.subarray(0, cut)])]]);
+    const { exec } = fakeExec(files);
+    const reader = newReader(exec);
+    expect(await counted(reader, { path: PATH, mtimeMs: 1000, size: base.length + cut })).toBe(2);
+
+    files.set(PATH, Buffer.concat([base, whole]));
+    expect(await counted(reader, { path: PATH, mtimeMs: 2000, size: base.length + whole.length })).toBe(3);
   });
 
   test('a half-written line is counted once it is whole', async () => {
