@@ -21,26 +21,52 @@ export const SCAN_CHUNK_BYTES = 4 * 1024 * 1024;
 // herdr's runtime has no TextEncoder: the byte length of a string in UTF-8 is counted from its
 // UTF-16 code units. A surrogate pair is one 4-byte character; a lone surrogate is 3 bytes, the
 // U+FFFD TextEncoder would write for it.
+function charBytes(text, i) {
+  const unit = text.charCodeAt(i);
+  if (unit < 0x80) return 1;
+  if (unit < 0x800) return 2;
+  const next = text.charCodeAt(i + 1);
+  return unit >= 0xd800 && unit <= 0xdbff && next >= 0xdc00 && next <= 0xdfff ? 4 : 3;
+}
+
 function utf8Length(text) {
   let bytes = 0;
   for (let i = 0; i < text.length; i++) {
-    const unit = text.charCodeAt(i);
-    if (unit < 0x80) bytes += 1;
-    else if (unit < 0x800) bytes += 2;
-    else if (unit >= 0xd800 && unit <= 0xdbff && text.charCodeAt(i + 1) >= 0xdc00 && text.charCodeAt(i + 1) <= 0xdfff) {
-      bytes += 4;
-      i++;
-    } else bytes += 3;
+    const length = charBytes(text, i);
+    bytes += length;
+    if (length === 4) i++;
   }
   return bytes;
 }
 
+// The text after its first `n` bytes, for a block that starts `n` bytes before a position that
+// follows a newline; null when that is not what the text says. A block can start inside a
+// character, whose rest reads as one U+FFFD per byte (1 byte each, not the 3 of a U+FFFD
+// that the file holds): up to three leading ones are tried as such.
+function dropBytes(text, n) {
+  let strays = 0;
+  while (strays < 3 && text.charCodeAt(strays) === 0xfffd) strays++;
+  for (let s = 0; s <= strays; s++) {
+    let bytes = s;
+    let i = s;
+    while (i < text.length && bytes < n) {
+      const length = charBytes(text, i);
+      bytes += length;
+      i += length === 4 ? 2 : 1;
+    }
+    if (bytes === n && text.charCodeAt(i - 1) === 0x0a) return text.slice(i);
+  }
+  return null;
+}
+
 // What a scan of a file has covered: `state`, the provider's accumulator over the whole lines
-// of the file's first bytes. While the first pass is under way (`pos` is -1) those bytes are
-// the blocks before `block`, and `carry` is the text read after the last newline of them, a
-// line not whole yet. Once it is done, `pos` is the number of bytes covered, which is where
-// the last whole line ends (the next byte begins a line).
-const newScan = () => ({ state: undefined, block: 0, carry: '', pos: -1 });
+// of the file's first bytes. While a pass is under way (`pos` is -1) those bytes are the ones
+// before block `block`, and `carry` is the text read after the last newline of them, a line
+// not whole yet; `skip` is the number of bytes at the start of block `block` that are covered
+// already (a pass that goes on from `pos` starts in the block that holds it). Once a pass is
+// done, `pos` is the number of bytes covered, which is where the last whole line ends (the next
+// byte begins a line).
+const newScan = () => ({ state: undefined, block: 0, skip: 0, carry: '', pos: -1 });
 
 // `exec`: herdr's `exec`. `fold(state, entries)`: the provider's accumulator (see
 // src/providers/omp.js). `read(file)` takes `{ path, mtimeMs, size }` of a linked session file
@@ -48,8 +74,9 @@ const newScan = () => ({ state: undefined, block: 0, carry: '', pos: -1 });
 // with the tail window as `text`. A file no larger than the window is read whole by it, so
 // `sources.wholeFile` is true and the provider folds the text; a larger one gets a `state`
 // over the whole file (see `advance`), or `null` when it could not be built, so that every
-// figure of the session totals reads n/a (D4) and is tried again at the next refresh. A read
-// that fails gives an empty text and no state, so every figure reads n/a.
+// figure of the session totals reads n/a (D4) and is tried again at the next refresh. A tail
+// that cannot be read gives an empty text, so the figures about the end of the file read n/a
+// for that refresh; the scan of a large file is kept, and so are its totals.
 export function createSessionReader({ exec, fold }) {
   // path -> the scan of that file
   const scans = new Map();
@@ -65,24 +92,34 @@ export function createSessionReader({ exec, fold }) {
   //   lines before it are folded and the rest carried to the next block: no line is split. A
   //   character that a block boundary cuts reads as U+FFFD at both ends of the carried line;
   //   that can only change text inside a JSON string, never a figure.
-  //   The pass ends at the first short block. `dd` reports the bytes it copied, which is the
-  //   exact length of the block; the covered bytes end where the carried line begins.
+  //   The pass ends at the first short block. `dd` reports the bytes it copied (the number at
+  //   the start of its statistics line, whatever the language of the line), which is the exact
+  //   length of the block; the covered bytes end where the carried line begins. A line with no
+  //   newline yet that ends in a cut character is measured too long, so `pos` falls short; the
+  //   check below finds that out and the file is scanned again, which is safe, and the line is
+  //   whole at a later refresh.
   // - Afterwards only what was appended: `tail -c +<pos>` starts at the last covered byte, a
   //   newline, so the text after it begins a line, and its whole lines are folded; `pos`
   //   advances by their UTF-8 length. A line being written is left for the next refresh, when
   //   it is whole. Starting one byte early checks the bookkeeping: anything but a newline
   //   there means the file is not what was scanned, and it is scanned again.
-  // - A smaller file than scanned was replaced, so the scan starts over, as it does when more
-  //   was appended than one read can take.
+  // - When more was appended than one read can take, the pass goes on in blocks from the one
+  //   that holds `pos`, dropping its bytes that are covered already.
+  // - A smaller file than scanned was replaced, so the scan starts over.
   //
-  // A read that fails leaves the scan as it was (a chunk is folded only once read), so the next
+  // A read that fails leaves the scan as it was (a block is folded only once read), so the next
   // refresh goes on from there, and throws.
   async function advance(path, size) {
     let scan = scans.get(path);
     if (scan && (size < (scan.pos >= 0 ? scan.pos : scan.block * SCAN_CHUNK_BYTES) || scan.pos === 0)) scan = undefined;
     if (scan?.pos >= 0) {
       if (size === scan.pos) return scan.state;
-      if (size - scan.pos <= SCAN_CHUNK_BYTES) {
+      if (size - scan.pos > SCAN_CHUNK_BYTES) {
+        scan.block = Math.floor(scan.pos / SCAN_CHUNK_BYTES);
+        scan.skip = scan.pos - scan.block * SCAN_CHUNK_BYTES;
+        scan.carry = '';
+        scan.pos = -1;
+      } else {
         const added = await exec('tail', ['-c', `+${scan.pos}`, '--', path]);
         if (added.code !== 0) throw new Error(`tail failed on ${path}`);
         if (added.stdout.startsWith('\n')) {
@@ -92,8 +129,8 @@ export function createSessionReader({ exec, fold }) {
           scan.pos += utf8Length(whole);
           return scan.state;
         }
+        scan = undefined;
       }
-      scan = undefined;
     }
     if (!scan) {
       scan = newScan();
@@ -101,9 +138,20 @@ export function createSessionReader({ exec, fold }) {
     }
     while (scan.pos < 0) {
       const block = await exec('dd', [`if=${path}`, `bs=${SCAN_CHUNK_BYTES}`, `skip=${scan.block}`, 'count=1']);
-      const copied = /^(\d+) bytes/m.exec(block.stderr ?? '');
+      const copied = /^(\d+) \S/m.exec(block.stderr ?? '');
       if (block.code !== 0 || !copied) throw new Error(`dd failed on ${path}`);
-      const text = scan.carry + block.stdout;
+      let blockText = block.stdout;
+      if (scan.skip > 0) {
+        blockText = dropBytes(blockText, scan.skip);
+        if (blockText === null) {
+          // not the file that was scanned
+          scan = newScan();
+          scans.set(path, scan);
+          continue;
+        }
+        scan.skip = 0;
+      }
+      const text = scan.carry + blockText;
       const cut = text.lastIndexOf('\n') + 1;
       scan.state = fold(scan.state, parseEntries(text.slice(0, cut)));
       scan.carry = text.slice(cut);
@@ -125,22 +173,15 @@ export function createSessionReader({ exec, fold }) {
 
   return {
     async read(file) {
-      try {
-        const tail = await exec('tail', ['-c', String(TAIL_BYTES), '--', file.path]);
-        if (tail.code !== 0) {
-          scans.delete(file.path);
-          return { text: '', sources: {} };
-        }
-        if (file.size <= TAIL_BYTES) {
-          scans.delete(file.path);
-          return { text: tail.stdout, sources: { wholeFile: true } };
-        }
-        const state = await queued(file.path, () => advance(file.path, file.size)).catch(() => null);
-        return { text: tail.stdout, sources: {}, state };
-      } catch {
+      // a tail that cannot be read, or cannot be started, is an empty text
+      const tail = await exec('tail', ['-c', String(TAIL_BYTES), '--', file.path]).catch(() => ({ code: -1 }));
+      const text = tail.code === 0 ? tail.stdout : '';
+      if (file.size <= TAIL_BYTES) {
         scans.delete(file.path);
-        return { text: '', sources: {} };
+        return tail.code === 0 ? { text, sources: { wholeFile: true } } : { text, sources: {} };
       }
+      const state = await queued(file.path, () => advance(file.path, file.size)).catch(() => null);
+      return { text, sources: {}, state };
     },
   };
 }

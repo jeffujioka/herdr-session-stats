@@ -156,10 +156,31 @@ describe('whole-session figures on a large file', () => {
   });
 
   test('scan reads in bounded chunks', async () => {
-    // a file over herdr's whole exec output: no single read can take it
-    const { text } = ompSession({ bytes: EXEC_CAP + 1_500_000 });
+    // a file over herdr's whole exec output: no single read can take it. An assistant turn with
+    // usage lies across the end of the first block and a compaction across the end of the
+    // second, so a carried line that was lost or folded twice would change the figures.
+    const turn = ompTurn(2, [100, 200, 300, 400, 2]);
+    const compact = line({ type: 'compaction', id: 'c-straddle', summary: 's'.repeat(500) });
+    const lines = [line({ type: 'session', id: 's', timestamp: stamp(0) }), line({ type: 'compaction', id: 'c1' }), ompTurn(0, EARLY[0]), ompTurn(1, EARLY[1])];
+    const place = (target, boundary) => {
+      const here = Buffer.byteLength(lines.join('\n')) + 1;
+      const note = (n) => line({ type: 'custom', note: 'n'.repeat(n) });
+      const start = boundary - Math.floor(Buffer.byteLength(target) / 2);
+      lines.push(note(start - here - Buffer.byteLength(note(0)) - 1), target);
+    };
+    place(turn, SCAN_CHUNK_BYTES);
+    place(compact, 2 * SCAN_CHUNK_BYTES);
+    lines.push(ompTurn(3, LATE[0], 'tail-model'), ompTurn(4, LATE[1], 'tail-model'));
+    const text = `${lines.join('\n')}\n`;
     const bytes = Buffer.from(text);
     expect(bytes.length).toBeGreaterThan(EXEC_CAP);
+    // both lines do run across a block boundary
+    for (const [target, boundary] of [[turn, SCAN_CHUNK_BYTES], [compact, 2 * SCAN_CHUNK_BYTES]]) {
+      const start = bytes.indexOf(target);
+      expect(start).toBeLessThan(boundary);
+      expect(start + Buffer.byteLength(target)).toBeGreaterThan(boundary);
+    }
+
     const files = new Map([[OMP_PATH, bytes]]);
     const { exec, calls } = fakeExec(files);
     const stats = await ompReader(exec)(ompFile(text));
@@ -173,10 +194,15 @@ describe('whole-session figures on a large file', () => {
     expect(SCAN_CHUNK_BYTES).toBeLessThanOrEqual(EXEC_CAP);
     // each block follows the one before; none is read twice
     expect(scan.map((call) => call.args[2])).toEqual(scan.map((_, k) => `skip=${k}`));
-    // a line split between two blocks is read whole, so no turn is lost at a boundary
-    expect(stats.totalTokens).toBe(601);
+    // each carried line is folded once, whole: the turn that crosses a boundary is in the
+    // totals once, and so is the compaction
+    expect(stats.totalTokens).toBe(130 + 111 + 1000 + 303 + 57);
+    expect(stats.costUsd).toBeCloseTo(0.5 + 0.25 + 2 + 0.125 + 0.0625, 12);
+    expect(stats.premiumRequests).toBe(5);
+    expect(stats.cacheHitRate).toBeCloseTo(700 / (119 + 700 + 550), 12);
+    expect(stats.cacheHits).toBe(3);
+    expect(stats.cacheMisses).toBe(2);
     expect(stats.autocompactions).toBe(2);
-    expect(stats.cacheHits).toBe(2);
   });
 
   test('a character cut by a block boundary does not move where the next read starts', async () => {
