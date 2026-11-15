@@ -8,9 +8,8 @@
 // get` write omp's agent.db and its natives folder when they start, so the compaction settings
 // are read from config.yml itself.
 
-import { createSessionReader } from '../refresh.js';
 import { ompProvider } from './omp.js';
-import { findSessionFile } from './session-files.js';
+import { findSessionFile, sessionReaders } from './session-files.js';
 
 // The model catalogue and the compaction settings change rarely; they are read again after
 // this long rather than at every refresh.
@@ -131,11 +130,7 @@ function catalogueQuery(provider) {
 // per-machine session readers, the slow sources) lives in the returned object.
 export function createOmpSessions({ execOn, readTextOn }) {
   // machine -> the reader that keeps that machine's per-file totals
-  const readers = new Map();
-  function readerOn(machine) {
-    if (!readers.has(machine)) readers.set(machine, createSessionReader({ exec: execOn(machine), fold: ompProvider.fold }));
-    return readers.get(machine);
-  }
+  const readerOn = sessionReaders(execOn, ompProvider.fold);
 
   // key -> { at, value: Promise }: a value reused for `ttl` ms, also by panes asking at once
   const cache = new Map();
