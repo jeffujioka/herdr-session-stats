@@ -24,9 +24,17 @@
 //   link({ machine, cwd, home, os })       -> Promise<{ path, mtimeMs, size } | null>
 //     the session file the pane's folder links to (the newest one, however long ago it
 //     changed, see session-link.js), or null; `home` and `os` (`uname -s`) are the machine's;
+//     used for the only agent pane of a folder, and for a provider without `list`;
+//   list({ machine, cwd, home, os, limit }) -> Promise<Array<{ path, mtimeMs, size, title? }>>
+//     optional: the `limit` newest session files of the folder, newest first, with each file's
+//     title where the harness writes one into it. The builder calls it once for the agent
+//     panes of one folder, machine and harness (`limit` is their number) when there are
+//     several, and `shareSessions` (src/session-link.js) shares the files out among them by
+//     the panes' terminal titles. A provider with no titles leaves `list` out, and such panes
+//     all link to the newest file and show one card;
 //   read(file, { machine, home, now })     -> Promise<input>
 //     the `input` of this provider's `readStats` for a linked file.
-// Both may reject: the card then reads n/a. A provider without the hook yields no session.
+// Each may reject: the card then reads n/a. A provider without the hook yields no session.
 //
 // Stats shape (single place; docs/omp-session-format.md repeats it with the omp sources).
 // Every figure is a plain value or the string 'n/a' (NA); the card formats, never estimates.

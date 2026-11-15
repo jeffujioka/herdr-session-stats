@@ -18,7 +18,7 @@
 
 import { readGit } from './git.js';
 import { createSessions, readStats } from './providers/index.js';
-import { collapseBySession } from './session-link.js';
+import { collapseBySession, shareSessions } from './session-link.js';
 
 // Longest any one program may run before the app's `exec` rejects it.
 export const EXEC_TIMEOUT_MS = 10 * 1000;
@@ -48,6 +48,23 @@ export function agentPanes(panes) {
 export function panesOfActiveSpace(panes, spaces) {
   const tabs = new Set(spaces.filter((space) => space.active).flatMap((space) => space.tabs.map((tab) => tab.id)));
   return panes.filter((pane) => tabs.has(pane.tab));
+}
+
+// The agent panes grouped by folder, machine and harness, the panes that can share session
+// files: a Map from each pane to its group `{ panes }` (the panes in draw order, which is
+// also the order the files are shared out in). A group lasts one build, so a provider's
+// `list` runs once for it (`shared`, set by the builder).
+function groupsOf(agents) {
+  const groups = new Map();
+  const byPlace = new Map();
+  for (const pane of agents) {
+    const key = `${pane.machine ?? ''}\0${pane.cwd ?? ''}\0${pane.app}`;
+    if (!byPlace.has(key)) byPlace.set(key, { panes: [] });
+    const group = byPlace.get(key);
+    group.panes.push(pane);
+    groups.set(pane, group);
+  }
+  return groups;
 }
 
 const NO_GIT = { branch: null, origin: null };
@@ -105,13 +122,25 @@ export function createCardBuilder({ exec, readTextFile, home }) {
   }
 
   // The pane's linked session file and the machine's home, or null: no hook, no folder, a
-  // machine that cannot be reached, or a folder with no session.
-  async function link(pane) {
+  // machine that cannot be reached, or a folder with no session. `group` is the pane's
+  // group of this build (`groupOf`): where several panes share a folder and the provider can
+  // `list` it, the group's files are listed once and shared out among them by their titles
+  // (session-link.js); otherwise the pane links to the newest file.
+  async function link(pane, group) {
     try {
       const hook = sessionsOf(pane.app);
       if (!hook || !pane.cwd) return null;
       const { os, home: machineHome } = await placeOn(pane.machine);
-      const file = await hook.link({ machine: pane.machine, cwd: pane.cwd, home: machineHome, os });
+      const where = { machine: pane.machine, cwd: pane.cwd, home: machineHome, os };
+      let file;
+      if (group.panes.length > 1 && hook.list) {
+        group.shared ??= hook
+          .list({ ...where, limit: group.panes.length })
+          .then((files) => shareSessions(files, group.panes.map((member) => member.title)));
+        file = (await group.shared)[group.panes.indexOf(pane)];
+      } else {
+        file = await hook.link(where);
+      }
       return file ? { file, home: machineHome } : null;
     } catch {
       return null;
@@ -119,8 +148,8 @@ export function createCardBuilder({ exec, readTextFile, home }) {
   }
 
   // `reads`: session key -> stats, shared by the panes of one build that link to one session.
-  async function resolve(pane, now, reads) {
-    const [git, linked] = await Promise.all([gitOf(pane, now), link(pane)]);
+  async function resolve(pane, group, now, reads) {
+    const [git, linked] = await Promise.all([gitOf(pane, now), link(pane, group)]);
     // the machine is part of the key: two machines can hold the same path
     const sessionPath = linked ? `${pane.machine ?? ''}\0${linked.file.path}` : null;
     let stats;
@@ -177,11 +206,12 @@ export function createCardBuilder({ exec, readTextFile, home }) {
     // panes that went away, and sessions they no longer share, leave the list at once
     notify();
     const reads = new Map();
+    const groupOf = groupsOf(agents);
     const started = agents
       .filter((pane) => !running.has(pane.pane))
       .map((pane) => {
         running.add(pane.pane);
-        return resolve(pane, now, reads)
+        return resolve(pane, groupOf.get(pane), now, reads)
           .catch(() => ({ sessionPath: null, card: failedCard(pane) }))
           .then((entry) => {
             running.delete(pane.pane);

@@ -57,11 +57,21 @@ session figure on its card reads `n/a`. Between an agent's start and its first w
 the card shows the figures and idle time of the folder's previous conversation, since that is
 still the newest session. The mod never estimates a figure.
 
-**Known ambiguity: two agents in one folder.** Session files are found by folder, so two
-agents of the same harness running in the same folder cannot be told apart. Both panes resolve
-to the newest-modified session file, so they show the same session, and the mod collapses
-them into one card. The stats of the agent that wrote last are the ones shown. To keep two
-agents apart, run them in different folders.
+**Two agents in one folder.** When several panes of one harness run in the same folder (on the
+same machine), the mod tells them apart by title. omp writes the session's title into the
+session file and sets it as the terminal title, which herdr reports as the pane's title (for
+example `π > Fix the login bug`). A pane whose title contains the title of one of the folder's
+newest session files gets that session (the longest title first when several match), and each
+pane shows its own card. The panes left, in pane order, take the newest sessions that no pane
+matched: a session that has no title yet (its terminal title is the folder's name) goes to the
+new pane this way. The mod reads only the first line of each of those files for the title.
+
+**Known ambiguity.** Two untitled sessions cannot be told apart: the panes are given the newest
+sessions in pane order, which may be the wrong way round. Panes with equal titles, or whose
+titles contain the title of the same session, resolve to the same session and the mod collapses
+them into one card. Claude Code and opencode sessions carry no title the mod can match, so
+their panes in one folder all link to the newest session and collapse too. To keep such agents
+apart, run them in different folders.
 
 ## Install
 
