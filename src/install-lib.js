@@ -20,7 +20,7 @@
 // `fs`: { exists(path), readText(path), writeText(path, text) (makes the folders),
 //         listFiles(dir) (relative paths with '/', recursive, sorted), remove(path) }.
 
-import { DRAWER_COMMAND } from './adapt.js';
+import { DRAWER_COMMAND, DRAWER_PEEK_PX } from './adapt.js';
 
 export const MOD_NAME = 'herdr-session-stats';
 
@@ -30,8 +30,8 @@ export const DOCK_BLOCK_ID = 'session-stats-dock';
 export const DOCK_KEY = 'f7';
 
 // The drawer: a floating block over the root, on the right edge; only `DRAWER_PEEK_PX` of it
-// shows until it is hovered (herdr's `peek`).
-const DRAWER_PEEK_PX = 72;
+// shows until it is hovered (herdr's `peek`; the constant is the mod's, which reserves a strip
+// of that width for the key figures).
 export const DRAWER_BLOCK_ID = 'session-stats-drawer';
 export const DRAWER_KEY = 'f8';
 
