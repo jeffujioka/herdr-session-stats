@@ -4,15 +4,16 @@
 //
 // What it does (spec D1, D10):
 //  - mirrors the built mod folder (scripts/sync.sh's output) into `<home>/mods/<mod>`;
-//  - clones the developer's active layout as `<active>-stats` and adds the presentations to the
-//    clone; the active layout's own file is never written;
+//  - clones the developer's active layout as `<active>-stats` and adds the dock and the drawer
+//    to the clone; the active layout's own file is never written;
 //  - merges the presentations' keys into `keys.json`: every binding that is there stays, and a
 //    key that is taken is reported, never overwritten.
 // Run again, it finds everything in place and writes nothing.
 //
-// The presentations are an additive list (`PRESENTATIONS`): each one is `{ id, blockId, key,
-// addTo(layout) }`, the block it puts into the clone and the key that toggles it. The dock and
-// the drawer are an entry each; the overlay is one more entry, not a change to the install.
+// The presentations are an additive list (`PRESENTATIONS`): each one is `{ id, key }`, and the
+// dock and the drawer also `{ blockId, addTo(layout) }`, the block they put into the clone and
+// that their key toggles. The overlay is a presentation without a block: its key is `mod.open`,
+// bound in `global`, and nothing is added to the clone for it.
 //
 // `fs`: { exists(path), readText(path), writeText(path, text) (makes the folders),
 //         listFiles(dir) (relative paths with '/', recursive, sorted), remove(path) }.
@@ -68,21 +69,28 @@ function addDrawer(layout) {
   return out;
 }
 
+// The overlay: a popup the mod opens over everything. It has no block in any layout and so is
+// not added to the clone: its key is bound in `global` and runs `mod.open`, which opens the mod
+// and, pressed again, closes it. Its size is the `overlay` of the mod's mod.json.
+export const OVERLAY_KEY = 'ctrl-shift-a';
+
+// Each presentation is `{ id, key }`, and, when it is a block of a layout, `blockId` and
+// `addTo(layout)` as well (the dock and the drawer); one without a `blockId` is the overlay's kind.
 export const PRESENTATIONS = [
   { id: 'dock', blockId: DOCK_BLOCK_ID, key: DOCK_KEY, addTo: addDock },
   { id: 'drawer', blockId: DRAWER_BLOCK_ID, key: DRAWER_KEY, addTo: addDrawer },
+  { id: 'overlay', key: OVERLAY_KEY },
 ];
 
-// The keys of the presentations in the clone named `layoutName`: the key runs `layout.toggle`
-// on the presentation's block, in that layout's section only, so it does nothing in a layout
-// that has no such block.
+// The keys of the presentations for the clone named `layoutName`. A block's key runs
+// `layout.toggle` on its block, in that layout's section only, so it does nothing in a layout
+// that has no such block. The overlay's key runs `mod.open` in `global`, for any layout.
 export function bindingsFor(layoutName) {
-  return PRESENTATIONS.map((p) => ({
-    presentation: p.id,
-    section: `layout:${layoutName}`,
-    key: p.key,
-    action: `layout.toggle:${p.blockId}`,
-  }));
+  return PRESENTATIONS.map(({ id, blockId, key }) =>
+    blockId
+      ? { presentation: id, section: `layout:${layoutName}`, key, action: `layout.toggle:${blockId}` }
+      : { presentation: id, section: 'global', key, action: `mod.open:${MOD_NAME}` },
+  );
 }
 
 // A `layout:<name>` section applies only while layouts/<name>.json shows, so the keys the
@@ -103,9 +111,11 @@ export function copyLayoutKeys(keys, from, to) {
 // Merges `bindings` into `keys` without changing the input. A key goes in when no binding of
 // the developer's is in its way: the same key in the binding's own section, in `global` (which
 // it would shadow in the clone) or in `terminal` (which would shadow it) with another action is
-// a conflict; it is reported with what holds the key and not bound. A binding that is already in
-// place is neither added nor a conflict, so a second run changes nothing. Keys are compared by
-// their exact spelling: `ctrl-shift-s` and `shift-ctrl-s` are not seen as the same key.
+// a conflict; so is a key that a `global` binding finds in any `layout:` section, which wins
+// over `global` in its layout and would hide the binding there. A conflict is reported with
+// what holds the key and not bound. A binding that is already in place is neither added nor a
+// conflict, so a second run changes nothing. Keys are compared by their exact spelling:
+// `ctrl-shift-s` and `shift-ctrl-s` are not seen as the same key.
 export function mergeKeys(keys, bindings) {
   const out = structuredClone(keys);
   const added = [];
@@ -113,7 +123,8 @@ export function mergeKeys(keys, bindings) {
   for (const binding of bindings) {
     const { presentation, section, key, action } = binding;
     if (out[section]?.[key] === action) continue;
-    const holder = [section, 'global', 'terminal'].find((s) => out[s]?.[key] !== undefined);
+    const hiding = section === 'global' ? Object.keys(out).filter((s) => s.startsWith('layout:')) : [];
+    const holder = [section, 'global', 'terminal', ...hiding].find((s) => out[s]?.[key] !== undefined);
     if (holder) {
       conflicts.push({ presentation, key, section: holder, taken: out[holder][key] });
     } else {
@@ -190,7 +201,8 @@ export function install({ fs, root, home, active }) {
 
   // The clone is `<active>-stats`. When the developer has switched to the clone, it is the
   // active layout and holds the presentations already: it is the one to complete.
-  const isClone = PRESENTATIONS.some((p) => findNode(JSON.parse(activeText), p.blockId));
+  const blocks = PRESENTATIONS.filter((p) => p.blockId);
+  const isClone = blocks.some((p) => findNode(JSON.parse(activeText), p.blockId));
   const target = isClone ? active : `${active}-stats`;
   const targetPath = `${home}/layouts/${target}.json`;
   // A clone that exists is completed, never rebuilt from the active layout: it may have been
@@ -198,7 +210,7 @@ export function install({ fs, root, home, active }) {
   const created = !isClone && !fs.exists(targetPath);
   const baseText = created || isClone ? activeText : fs.readText(targetPath);
   const base = JSON.parse(baseText);
-  const layout = PRESENTATIONS.reduce((l, p) => p.addTo(l), base);
+  const layout = blocks.reduce((l, p) => p.addTo(l), base);
   const layoutChanged = created || JSON.stringify(layout) !== JSON.stringify(base);
 
   // The keys of the layout in use come first, so the clone's section is whole when the

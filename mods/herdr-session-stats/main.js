@@ -4,10 +4,10 @@
 
 import { View, div } from "gpui-kit";
 import { v_flex, h_flex } from "gpui-base";
-import { exec, home, panes, placement, readTextFile, spaces, theme } from "herdr";
+import { exec, home, panes, placement, props, readTextFile, spaces, theme } from "herdr";
 import { adapt } from "./adapt.js";
 import { agentPanes, createCardBuilder } from "./cards.js";
-import { describeCard } from "./format.js";
+import { describeCard, formatCost, formatPercent } from "./format.js";
 import { REFRESH_INTERVAL_MS } from "./refresh.js";
 
 // The panes as `panes()` reports them, each with the machine of its space: the pane's tab
@@ -17,30 +17,33 @@ function livePanes() {
   return panes().map((pane) => ({ ...pane, machine: machineOfTab.get(pane.tab) ?? null }));
 }
 
-function card(c, t) {
+// A full card. `roomy` is the overlay's: the same figures in larger type, the rows in two
+// columns, so the card uses the room of the larger dialog.
+function card(c, t, roomy) {
   const { title, place, rows } = describeCard(c);
   const [folder, ...git] = place;
+  const [titleSize, placeSize, rowSize] = roomy ? [18, 14, 14] : [13, 11, 12];
   return v_flex()
     .id(`card-${c.id}`)
     .gap(2)
-    .p(10)
+    .p(roomy ? 14 : 10)
     .rounded(6)
     .bg(t.surface)
     .border(1)
     .border_color(t.border)
-    .child(div().text_size(13).font_semibold().text_color(t.foreground).truncate().child(title))
-    .child(div().text_size(11).text_color(t.muted).truncate().child(folder ?? "n/a"))
-    .children(git.map((line) => div().text_size(11).text_color(t.dim).truncate().child(line)))
+    .child(div().text_size(titleSize).font_semibold().text_color(t.foreground).truncate().child(title))
+    .child(div().text_size(placeSize).text_color(t.muted).truncate().child(folder ?? "n/a"))
+    .children(git.map((line) => div().text_size(placeSize).text_color(t.dim).truncate().child(line)))
     .child(
-      v_flex()
-        .gap(1)
-        .pt(6)
+      (roomy ? h_flex().flex_wrap() : v_flex().gap(1))
+        .pt(roomy ? 10 : 6)
         .children(
           rows.map(([label, value]) =>
             h_flex()
               .justify_between()
               .gap(8)
-              .text_size(12)
+              .text_size(rowSize)
+              .when(roomy, (el) => el.w_1_2().px(8).py(2))
               .child(div().flex_none().text_color(t.dim).child(label))
               .child(div().truncate().text_color(value === "n/a" ? t.dim : t.foreground).child(value)),
           ),
@@ -51,10 +54,9 @@ function card(c, t) {
 // The drawer's card: one compact row. Its key figures (context used, cost) come first, so they
 // are on the edge side and show while the drawer peeks; `mirror` puts that side on the right.
 function compactCard(c, t, mirror) {
-  const { title, place, rows } = describeCard(c);
-  const value = (label) => rows.find(([name]) => name === label)?.[1] ?? "n/a";
-  const { contextPercent } = c.stats;
-  const context = typeof contextPercent === "number" ? `${Math.round(contextPercent * 100)}%` : "n/a";
+  const { title, place } = describeCard(c);
+  const context = formatPercent(c.stats.contextPercent);
+  const cost = formatCost(c.stats.costUsd);
   const figure = (text, size, color) => div().text_size(size).text_color(text === "n/a" ? t.dim : color).child(text);
   return h_flex()
     .id(`card-${c.id}`)
@@ -71,7 +73,7 @@ function compactCard(c, t, mirror) {
         .w(52)
         .items_center()
         .child(figure(context, 13, t.foreground).font_semibold())
-        .child(figure(value("Cost"), 11, t.muted)),
+        .child(figure(cost, 11, t.muted)),
     )
     .child(
       v_flex()
@@ -129,9 +131,10 @@ export default class SessionStats extends View {
     const empty = this.agents === 0 ? "No agents" : "Loading…";
     const note = this.problem ?? (this.cards.length === 0 ? empty : null);
     // The container decides how the cards are listed: a column or a side edge stacks them, a
-    // top or bottom edge puts them side by side, and a drawer on a side edge draws each card as
-    // a compact row, mirrored on the right edge (src/adapt.js).
-    const { direction, compact, mirror } = adapt({ placement: placement() });
+    // top or bottom edge puts them side by side, a drawer on a side edge draws each card as a
+    // compact row, mirrored on the right edge, and the overlay draws the full card roomy
+    // (src/adapt.js).
+    const { direction, compact, mirror, roomy } = adapt({ placement: placement(), overlay: props()?.overlay });
     const vertical = direction === "vertical";
     const list = vertical
       ? v_flex().overflow_y_scrollbar()
@@ -145,7 +148,7 @@ export default class SessionStats extends View {
       .children(
         this.cards.map((c) => {
           if (compact) return compactCard(c, t, mirror);
-          return vertical ? card(c, t) : div().flex_none().w(260).child(card(c, t));
+          return vertical ? card(c, t, roomy) : div().flex_none().w(260).child(card(c, t, false));
         }),
       )
       .when(note !== null, (el) => el.child(div().text_size(12).text_color(t.dim).child(note)));

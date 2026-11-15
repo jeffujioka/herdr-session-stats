@@ -2,7 +2,7 @@ import { afterEach, beforeEach, describe, expect, test } from 'bun:test';
 import { mkdirSync, mkdtempSync, readFileSync, readdirSync, rmSync, statSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { activeLayoutFrom, install, MOD_NAME } from '../src/install-lib.js';
+import { activeLayoutFrom, bindingsFor, install, MOD_NAME, mergeKeys, PRESENTATIONS } from '../src/install-lib.js';
 import { nodeFs } from '../scripts/install.js';
 
 // A scratch repo (the mod folder as scripts/sync.sh leaves it) and a scratch herdr home. The
@@ -181,7 +181,7 @@ describe('install into herdr', () => {
     expect(report.keys.conflicts).toEqual([
       expect.objectContaining({ presentation: 'dock', key: 'ctrl-shift-s', section: 'global', taken: 'tab.new' }),
     ]);
-    expect(report.keys.added.map((b) => b.presentation)).toEqual(['drawer']);
+    expect(report.keys.added.map((b) => b.presentation)).toEqual(['drawer', 'overlay']);
     expect(JSON.stringify(keys)).not.toContain('session-stats-dock');
     // the keys of the layout the developer uses work in the clone too (a section applies only
     // while its layout shows): copied into the clone's section, where a key it already has stays
@@ -316,8 +316,64 @@ describe('three presentations of the one mod', () => {
     const report = run();
 
     expect(report.keys.conflicts).toEqual([expect.objectContaining({ presentation: 'drawer', key: 'ctrl-shift-d', section: 'global', taken: 'tab.new' })]);
-    expect(report.keys.added.map((b) => b.presentation)).toEqual(['dock']);
+    expect(report.keys.added.map((b) => b.presentation)).toEqual(['dock', 'overlay']);
     expect(readJson(join(home, 'keys.json')).global['ctrl-shift-d']).toBe('tab.new');
+  });
+
+  test('overlay key is mod.open', () => {
+    const report = run();
+
+    const keys = readJson(join(home, 'keys.json'));
+    const clone = readJson(join(home, 'layouts', 'main-stats.json'));
+    const key = 'ctrl-shift-a';
+    // the overlay's key is `mod.open` for the mod: pressed once it opens, pressed again herdr
+    // closes it. It is in `global`, so it works in any layout, with or without the clone
+    expect(keys.global[key]).toBe(`mod.open:${MOD_NAME}`);
+    expect(keys['layout:main-stats']?.[key]).toBeUndefined();
+    expect(keys['layout:main']?.[key]).toBeUndefined();
+    // and it needs no block: the overlay is not in the clone, which holds only the dock and the drawer
+    expect(ids(clone).sort()).toEqual([...ids(ACTIVE), 'session-stats-dock', 'session-stats-drawer'].sort());
+    expect(report.keys.added).toContainEqual(expect.objectContaining({ presentation: 'overlay', key, section: 'global', action: `mod.open:${MOD_NAME}` }));
+    expect(report.keys.conflicts).toEqual([]);
+    // the key is its own: not the dock's or the drawer's
+    expect(new Set(PRESENTATIONS.map((p) => p.key)).size).toBe(PRESENTATIONS.length);
+    // a layout that has none of the blocks still gets it
+    const bare = mergeKeys({ global: {} }, bindingsFor('plain'));
+    expect(bare.keys.global[key]).toBe(`mod.open:${MOD_NAME}`);
+  });
+
+  test('an overlay key that is taken, in global or in a layout section, is reported', () => {
+    put(join(home, 'keys.json'), `${JSON.stringify({ ...KEYS, global: { ...KEYS.global, 'ctrl-shift-a': 'tab.new' } }, null, 2)}\n`);
+    let report = run();
+    expect(report.keys.conflicts).toEqual([expect.objectContaining({ presentation: 'overlay', key: 'ctrl-shift-a', section: 'global', taken: 'tab.new' })]);
+    expect(report.keys.added.map((b) => b.presentation)).toEqual(['dock', 'drawer']);
+
+    // a layout section wins over `global` in its layout, so a key it holds would hide the overlay there
+    rmSync(join(home, 'layouts', 'main-stats.json'));
+    put(join(home, 'keys.json'), `${JSON.stringify({ ...KEYS, 'layout:main': { ...KEYS['layout:main'], 'ctrl-shift-a': 'mine.own' } }, null, 2)}\n`);
+    report = run();
+    expect(report.keys.conflicts.map((c) => [c.presentation, c.section, c.taken])).toEqual([['overlay', 'layout:main', 'mine.own']]);
+    expect(readJson(join(home, 'keys.json')).global['ctrl-shift-a']).toBeUndefined();
+  });
+});
+
+describe('the three keys', () => {
+  test('adds dock, drawer and overlay keys', () => {
+    const report = run();
+
+    const keys = readJson(join(home, 'keys.json'));
+    expect(keys['layout:main-stats']['ctrl-shift-s']).toBe('layout.toggle:session-stats-dock');
+    expect(keys['layout:main-stats']['ctrl-shift-d']).toBe('layout.toggle:session-stats-drawer');
+    expect(keys.global['ctrl-shift-a']).toBe(`mod.open:${MOD_NAME}`);
+    expect(report.keys.added.map((b) => [b.presentation, b.key])).toEqual([
+      ['dock', 'ctrl-shift-s'],
+      ['drawer', 'ctrl-shift-d'],
+      ['overlay', 'ctrl-shift-a'],
+    ]);
+    expect(report.keys.conflicts).toEqual([]);
+    // the developer's own bindings are kept
+    expect(keys.global).toMatchObject(KEYS.global);
+    expect(keys.terminal).toEqual(KEYS.terminal);
   });
 });
 

@@ -25,13 +25,17 @@ agents apart, run them in different folders.
   files the app writes there are left alone). The mod asks herdr for no place of its own
   (`"place": "none"`), so herdr does not dock it into the layout you are looking at;
 - your active layout (what `herdr-app status` says is shown, else `layout` in `shared.json`)
-  is cloned as `<active>-stats`, with the docked block added as a new right-hand column. Its
-  root must be a row, as in herdr's own layouts; any other root is refused before anything is
-  written. Show it with `herdr-app do layout.switch --name <active>-stats`;
-- `ctrl-shift-s` is bound to `layout.toggle` on the docked block, in the clone's `layout:`
-  section of `keys.json`. Your bindings are kept; if the key is already taken (in that
-  section, in `global` or in `terminal`, by that exact spelling) the install says so and
-  leaves it unbound;
+  is cloned as `<active>-stats`, with the docked block added as a new right-hand column and
+  the drawer as a floating block on the right edge that peeks. Its root must be a row, as in
+  herdr's own layouts; any other root is refused before anything is written. Show it with
+  `herdr-app do layout.switch --name <active>-stats`;
+- three keys are added to `keys.json`: `ctrl-shift-s` toggles the docked block and
+  `ctrl-shift-d` the drawer (`layout.toggle`, in the clone's `layout:` section), and
+  `ctrl-shift-a` opens the popup (`mod.open`, in `global`, so it works in any layout; pressed
+  again it closes). The popup is a larger dialog (`overlay` in `mod.json`) that draws each
+  card roomy. Your bindings are kept; a key that is already taken (in its own section, in
+  `global` or in `terminal`, and for the popup also in any `layout:` section, which would hide
+  it there; by that exact spelling) is reported by the install and left unbound;
 - the keys you have in the `layout:<active>` section are copied into `layout:<active>-stats`,
   because a section applies only while its layout shows. A key the clone's section already
   has stays as it is; nothing is replaced.
