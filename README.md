@@ -33,19 +33,13 @@ that does not log a figure reads `n/a` for it.
 
 ## Keys
 
-The install binds three keys, one for each way to show the same mod (see Install):
+The install binds two keys, one for each way to show the same mod (see Install):
 
-- `f7` toggles the docked block, a column on the right with the full cards;
-- `f8` shows and hides the drawer, a floating block on the right edge that peeks (the key
-  runs the mod's own `herdr-session-stats.drawer` command, because `layout.toggle` cannot find
-  a floating block). The drawer starts hidden and draws nothing until the key shows it; its
-  cards are the full card, in a fixed 360 px width whatever the length of a folder path, with
-  the context used and the cost in a 72 px strip on the right edge (the card's header row),
-  which is what shows while it peeks; the rest of each card shows when the drawer opens;
+- `f8` toggles the docked block, a column on the right with the cards;
 - `f9` opens the popup, a larger dialog that draws each card roomy; pressed again it
   closes.
 
-On a Mac keyboard F7-F9 can be media keys: press Fn with them, or turn on "Use F1, F2, etc.
+On a Mac keyboard F8 and F9 can be media keys: press Fn with them, or turn on "Use F1, F2, etc.
 keys as standard function keys" in the keyboard settings.
 
 ## How a pane is tied to a session
@@ -84,20 +78,21 @@ apart, run them in different folders.
   files the app writes there are left alone). The mod asks herdr for no place of its own
   (`"place": "none"`), so herdr does not dock it into the layout you are looking at;
 - your active layout (what `herdr-app status` says is shown, else `layout` in `shared.json`)
-  is cloned as `<active>-stats`, with the docked block added as a new right-hand column and
-  the drawer as a floating block on the right edge that peeks. Its root must be a row, as in
-  herdr's own layouts; any other root is refused before anything is written. Show it with
-  `herdr-app do layout.switch --name <active>-stats`;
-- three keys are added to `keys.json`: `f7` toggles the docked block (`layout.toggle`) and
-  `f8` the drawer (the mod's own `herdr-session-stats.drawer` command), both in the clone's
-  `layout:` section, and
-  `f9` opens the popup (`mod.open`, in `global`, so it works in any layout; pressed
-  again it closes). The popup is a larger dialog (`overlay` in `mod.json`) that draws each
-  card roomy. Your bindings are kept; a key that is already taken (in its own section, in
-  `global` or in `terminal`, and for the popup also in any `layout:` section, which would hide
-  it there; by that exact spelling) is reported by the install and left unbound. The one
-  binding it replaces is this mod's own earlier `f8` (`layout.toggle:session-stats-drawer`),
-  which it upgrades to the drawer command;
+  is cloned as `<active>-stats`, with the docked block added as a new right-hand column. Its
+  root must be a row, as in herdr's own layouts; any other root is refused before anything is
+  written. Show it with `herdr-app do layout.switch --name <active>-stats`;
+- two keys are added to `keys.json`: `f8` toggles the docked block (`layout.toggle`, in the
+  clone's `layout:` section) and `f9` opens the popup (`mod.open`, in `global`, so it works in
+  any layout; pressed again it closes). The popup is a larger dialog (`overlay` in `mod.json`)
+  that draws each card roomy. Your bindings are kept; a key that is already taken (in its own
+  section, in `global` or in `terminal`, and for the popup also in any `layout:` section, which
+  would hide it there; by that exact spelling) is reported by the install and left unbound;
+- an earlier install of this mod is cleaned up: the sliding drawer was removed, so the install
+  takes the drawer's floating block out of the clone (`session-stats-drawer`) and this mod's own
+  old bindings out of the clone's `layout:` section: `f7` (`layout.toggle:session-stats-dock`)
+  and `f8` (`herdr-session-stats.drawer`, or the earliest `layout.toggle:session-stats-drawer`).
+  A key is taken back only while it still holds exactly that action, so a binding of your own
+  on `f7` or `f8` is never touched (and a taken `f8` is reported, the dock then has no key);
 - the keys you have in the `layout:<active>` section are copied into `layout:<active>-stats`,
   because a section applies only while its layout shows. A key the clone's section already
   has stays as it is; nothing is replaced.
@@ -132,10 +127,10 @@ or `node:` import, no `Bun`, no `TextEncoder`, no `setInterval`, and only `exec`
   multi-megabyte session shows later than the rest. Then only what is appended is read.
 - **Project-level omp config is not read.** Headroom uses the compaction settings in
   `~/.omp/agent/config.yml`; a setting made only in a project's own omp config is not seen.
-- **Each open copy refreshes on its own.** The docked block, the drawer and the popup are
-  copies of one mod, and each one that is open lists the files and reads their tails every 2
-  seconds; a hidden copy may keep doing it. herdr shares a mod's module code between copies,
-  but the mod does not share one refresh between them: the reads in flight would belong to the
-  tasks of the copy that started them, and herdr leaves the promise of a cancelled task
-  pending for ever, so the other copies could wait on it for ever when that copy closes (the
-  popup closes often). Three open copies read the same files three times.
+- **Each open copy refreshes on its own.** The docked block and the popup are copies of one
+  mod, and each one that is open lists the files and reads their tails every 2 seconds; a
+  hidden copy may keep doing it. herdr shares a mod's module code between copies, but the mod
+  does not share one refresh between them: the reads in flight would belong to the tasks of the
+  copy that started them, and herdr leaves the promise of a cancelled task pending for ever, so
+  the other copies could wait on it for ever when that copy closes (the popup closes often).
+  Two open copies read the same files twice.

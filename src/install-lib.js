@@ -2,38 +2,30 @@
 // of any I/O of its own: `install` takes an `fs` (see below) and the name of the active layout,
 // so the tests run it on a scratch home and the CLI (scripts/install.js) hands it node's files.
 //
-// What it does (spec D1, D10):
+// What it does (spec D1, D10, D12):
 //  - mirrors the built mod folder (scripts/sync.sh's output) into `<home>/mods/<mod>`;
-//  - clones the developer's active layout as `<active>-stats` and adds the dock and the drawer
-//    to the clone; the active layout's own file is never written;
+//  - clones the developer's active layout as `<active>-stats` and adds the dock to the clone;
+//    the active layout's own file is never written;
 //  - merges the presentations' keys into `keys.json`: every binding that is there stays, and a
-//    key that is taken is reported, never overwritten (the one exception is this mod's own
-//    earlier drawer binding, which is upgraded to the drawer command).
+//    key that is taken is reported, never overwritten;
+//  - cleans up what the earlier installs wrote, the removed drawer: its floating block in the
+//    clone and this mod's own old `f7` and `f8` bindings (see `RETIRED_KEYS`).
 // Run again, it finds everything in place and writes nothing.
 //
 // The presentations are an additive list (`PRESENTATIONS`): each one is `{ id, key }`, and the
-// dock and the drawer also `{ blockId, addTo(layout) }`, the block they put into the clone and
-// that their key shows or hides (the dock by `layout.toggle`, the drawer by the mod's own
-// command). The overlay is a presentation without a block: its key is `mod.open`, bound in
-// `global`, and nothing is added to the clone for it.
+// dock also `{ blockId, addTo(layout) }`, the block it puts into the clone and that its key
+// shows or hides with `layout.toggle`. The overlay is a presentation without a block: its key
+// is `mod.open`, bound in `global`, and nothing is added to the clone for it.
 //
 // `fs`: { exists(path), readText(path), writeText(path, text) (makes the folders),
 //         listFiles(dir) (relative paths with '/', recursive, sorted), remove(path) }.
-
-import { DRAWER_COMMAND, DRAWER_PEEK_PX } from './adapt.js';
 
 export const MOD_NAME = 'herdr-session-stats';
 
 // The docked block: a right-hand column at the top level of the clone.
 const DOCK_PX = 320;
 export const DOCK_BLOCK_ID = 'session-stats-dock';
-export const DOCK_KEY = 'f7';
-
-// The drawer: a floating block over the root, on the right edge; only `DRAWER_PEEK_PX` of it
-// shows until it is hovered (herdr's `peek`; the constant is the mod's, which reserves a strip
-// of that width for the key figures).
-export const DRAWER_BLOCK_ID = 'session-stats-drawer';
-export const DRAWER_KEY = 'f8';
+export const DOCK_KEY = 'f8';
 
 function findNode(node, id) {
   if (node.id === id) return node;
@@ -61,54 +53,61 @@ function addDock(layout) {
   return out;
 }
 
-// The drawer as a floating block of the root. A block that is already in the layout is left as
-// the developer has it; the root's other floating blocks stay.
-function addDrawer(layout) {
-  if (findNode(layout, DRAWER_BLOCK_ID)) return layout;
-  const out = structuredClone(layout);
-  out.floating = [
-    ...(out.floating ?? []),
-    { id: DRAWER_BLOCK_ID, content: { mod: MOD_NAME }, edge: 'right', align: 'center', peek: DRAWER_PEEK_PX },
-  ];
-  return out;
-}
-
 // The overlay: a popup the mod opens over everything. It has no block in any layout and so is
 // not added to the clone: its key is bound in `global` and runs `mod.open`, which opens the mod
 // and, pressed again, closes it. Its size is the `overlay` of the mod's mod.json.
 export const OVERLAY_KEY = 'f9';
 
 // Each presentation is `{ id, key }`, and, when it is a block of a layout, `blockId` and
-// `addTo(layout)` as well (the dock and the drawer); one without a `blockId` is the overlay's
-// kind. A block's key runs `layout.toggle` on its block, unless the presentation has its own
-// `action`; the drawer's is the mod's own command (D12: `layout.toggle` cannot find a floating
-// block), and `replaces` is the earlier action of this mod on that key, upgraded on install.
+// `addTo(layout)` as well (the dock); one without a `blockId` is the overlay's kind. A block's
+// key runs `layout.toggle` on its block.
 export const PRESENTATIONS = [
   { id: 'dock', blockId: DOCK_BLOCK_ID, key: DOCK_KEY, addTo: addDock },
-  {
-    id: 'drawer',
-    blockId: DRAWER_BLOCK_ID,
-    key: DRAWER_KEY,
-    addTo: addDrawer,
-    action: `${MOD_NAME}.${DRAWER_COMMAND}`,
-    replaces: `layout.toggle:${DRAWER_BLOCK_ID}`,
-  },
   { id: 'overlay', key: OVERLAY_KEY },
 ];
+
+// What an earlier install of this mod wrote and this one takes back: the sliding drawer was
+// removed. The drawer's floating block, and this mod's own keys in the clone's section: the
+// dock's earlier key `f7`, and the drawer's `f8`, bound to the mod's own command and before
+// that to `layout.toggle`. A key is taken back only while it still holds that exact action, so
+// a binding of the developer's own on the same key is never touched.
+const RETIRED_DRAWER_ID = 'session-stats-drawer';
+const RETIRED_BLOCK_IDS = [RETIRED_DRAWER_ID];
+const RETIRED_KEYS = [
+  { key: 'f7', action: `layout.toggle:${DOCK_BLOCK_ID}` },
+  { key: 'f8', action: `${MOD_NAME}.drawer` },
+  { key: 'f8', action: `layout.toggle:${RETIRED_DRAWER_ID}` },
+];
+
+// The layout without the floating blocks of the root that an earlier install added and that are
+// retired; the root's other floating blocks stay. Returns the layout itself when there is none.
+function dropRetiredBlocks(layout) {
+  if (!layout.floating?.some((block) => RETIRED_BLOCK_IDS.includes(block.id))) return layout;
+  const { floating, ...rest } = layout;
+  const kept = floating.filter((block) => !RETIRED_BLOCK_IDS.includes(block.id));
+  return kept.length > 0 ? { ...rest, floating: kept } : rest;
+}
+
+// `keys` without the retired bindings of the section `section`, and what was removed as
+// `[{ section, key, action }]`; the input is not changed.
+export function dropRetiredKeys(keys, section) {
+  const out = structuredClone(keys);
+  const removed = [];
+  for (const { key, action } of RETIRED_KEYS) {
+    if (out[section]?.[key] !== action) continue;
+    delete out[section][key];
+    removed.push({ section, key, action });
+  }
+  return { keys: out, removed };
+}
 
 // The keys of the presentations for the clone named `layoutName`. A block's key is bound in
 // that layout's section only, so it does nothing in a layout that has no such block. The
 // overlay's key runs `mod.open` in `global`, for any layout.
 export function bindingsFor(layoutName) {
-  return PRESENTATIONS.map(({ id, blockId, key, action, replaces }) =>
+  return PRESENTATIONS.map(({ id, blockId, key }) =>
     blockId
-      ? {
-          presentation: id,
-          section: `layout:${layoutName}`,
-          key,
-          action: action ?? `layout.toggle:${blockId}`,
-          ...(replaces === undefined ? {} : { replaces }),
-        }
+      ? { presentation: id, section: `layout:${layoutName}`, key, action: `layout.toggle:${blockId}` }
       : { presentation: id, section: 'global', key, action: `mod.open:${MOD_NAME}` },
   );
 }
@@ -134,28 +133,22 @@ export function copyLayoutKeys(keys, from, to) {
 // a conflict; so is a key that a `global` binding finds in any `layout:` section, which wins
 // over `global` in its layout and would hide the binding there. A conflict is reported with
 // what holds the key and not bound. A binding that is already in place is neither added nor a
-// conflict, so a second run changes nothing. A binding with `replaces` takes over a key in its
-// own section that still holds that exact action (the mod's own earlier binding), reported as
-// added; any other action on the key is the developer's. Keys are compared by their exact
-// spelling: `ctrl-shift-s` and `shift-ctrl-s` are not seen as the same key.
+// conflict, so a second run changes nothing. Keys are compared by their exact spelling:
+// `ctrl-shift-s` and `shift-ctrl-s` are not seen as the same key.
 export function mergeKeys(keys, bindings) {
   const out = structuredClone(keys);
   const added = [];
   const conflicts = [];
   for (const binding of bindings) {
-    const { presentation, section, key, action, replaces } = binding;
+    const { presentation, section, key, action } = binding;
     if (out[section]?.[key] === action) continue;
-    // this mod's own earlier binding on the key is not in the way: it is the one being replaced
-    const upgrade = replaces !== undefined && out[section]?.[key] === replaces;
     const hiding = section === 'global' ? Object.keys(out).filter((s) => s.startsWith('layout:')) : [];
-    const holder = [section, 'global', 'terminal', ...hiding].find(
-      (s) => out[s]?.[key] !== undefined && !(upgrade && s === section),
-    );
+    const holder = [section, 'global', 'terminal', ...hiding].find((s) => out[s]?.[key] !== undefined);
     if (holder) {
       conflicts.push({ presentation, key, section: holder, taken: out[holder][key] });
     } else {
       (out[section] ??= {})[key] = action;
-      added.push(upgrade ? { ...binding, replaced: replaces } : binding);
+      added.push(binding);
     }
   }
   return { keys: out, added, conflicts };
@@ -211,7 +204,7 @@ function mirrorMod(fs, from, to) {
 // of the developer's active layout (see `activeLayoutFrom`). Everything is read and checked
 // before anything is written, so a refusal leaves the home as it was. Returns
 // `{ mod: { written, removed }, layout: { name, created, changed },
-//    keys: { added, copied, conflicts } }`.
+//    keys: { added, copied, conflicts, removed } }`.
 export function install({ fs, root, home, active }) {
   const modFrom = `${root}/mods/${MOD_NAME}`;
   if (!fs.exists(`${modFrom}/main.js`)) throw new Error(`the mod is not built: run scripts/sync.sh first (no ${modFrom}/main.js)`);
@@ -236,14 +229,16 @@ export function install({ fs, root, home, active }) {
   const created = !isClone && !fs.exists(targetPath);
   const baseText = created || isClone ? activeText : fs.readText(targetPath);
   const base = JSON.parse(baseText);
-  const layout = blocks.reduce((l, p) => p.addTo(l), base);
+  const layout = blocks.reduce((l, p) => p.addTo(l), dropRetiredBlocks(base));
   const layoutChanged = created || JSON.stringify(layout) !== JSON.stringify(base);
 
-  // The keys of the layout in use come first, so the clone's section is whole when the
+  // The earlier install's bindings of this mod go first, so the dock's key is free to take and
+  // the keys of the layout in use come next, so the clone's section is whole when the
   // presentations' keys are checked against it.
-  const copy = target === active ? { keys: JSON.parse(keysText), copied: [] } : copyLayoutKeys(JSON.parse(keysText), `layout:${active}`, `layout:${target}`);
+  const cleaned = dropRetiredKeys(JSON.parse(keysText), `layout:${target}`);
+  const copy = target === active ? { keys: cleaned.keys, copied: [] } : copyLayoutKeys(cleaned.keys, `layout:${active}`, `layout:${target}`);
   const merged = mergeKeys(copy.keys, bindingsFor(target));
-  const keysChanged = copy.copied.length > 0 || merged.added.length > 0;
+  const keysChanged = cleaned.removed.length > 0 || copy.copied.length > 0 || merged.added.length > 0;
 
   const mod = mirrorMod(fs, modFrom, `${home}/mods/${MOD_NAME}`);
   if (layoutChanged) fs.writeText(targetPath, formatJson(layout, baseText));
@@ -251,6 +246,6 @@ export function install({ fs, root, home, active }) {
   return {
     mod,
     layout: { name: target, created, changed: layoutChanged },
-    keys: { added: merged.added, copied: copy.copied, conflicts: merged.conflicts },
+    keys: { added: merged.added, copied: copy.copied, conflicts: merged.conflicts, removed: cleaned.removed },
   };
 }

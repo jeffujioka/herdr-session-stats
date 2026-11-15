@@ -2,7 +2,6 @@ import { afterEach, beforeEach, describe, expect, test } from 'bun:test';
 import { mkdirSync, mkdtempSync, readFileSync, readdirSync, rmSync, statSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { DRAWER_COMMAND } from '../src/adapt.js';
 import { activeLayoutFrom, bindingsFor, install, MOD_NAME, mergeKeys, PRESENTATIONS } from '../src/install-lib.js';
 import { nodeFs } from '../scripts/install.js';
 
@@ -130,11 +129,11 @@ describe('install into herdr', () => {
 
     const clone = readJson(join(home, 'layouts', 'main-stats.json'));
     // everything the developer had is still there: the docked block is one more right-hand
-    // column at the top level of the row, and the drawer floats over the root
-    const { children, floating, ...rest } = clone;
+    // column at the top level of the row
+    const { children, ...rest } = clone;
     expect(children.slice(0, 2)).toEqual(ACTIVE.children);
     expect(children).toHaveLength(3);
-    expect(floating).toHaveLength(1);
+    expect(clone.floating).toBeUndefined();
     expect(rest).toEqual({ ...ACTIVE, children: undefined });
     const dock = children[2];
     expect(dock.type).toBe('block');
@@ -168,7 +167,7 @@ describe('install into herdr', () => {
       ...KEYS,
       'layout:main': { ...KEYS['layout:main'], 'cmd-shift-g': 'review-toggle.gitlab' },
       'layout:main-stats': { 'cmd-shift-r': 'mine.own' },
-      global: { ...KEYS.global, f7: 'tab.new' },
+      global: { ...KEYS.global, f8: 'tab.new' },
     };
     put(join(home, 'keys.json'), `${JSON.stringify(taken, null, 2)}\n`);
 
@@ -177,12 +176,12 @@ describe('install into herdr', () => {
     const keys = readJson(join(home, 'keys.json'));
     // every existing binding is kept as it was
     for (const [section, bindings] of Object.entries(taken)) expect(keys[section]).toMatchObject(bindings);
-    expect(keys.global.f7).toBe('tab.new');
+    expect(keys.global.f8).toBe('tab.new');
     // the key that was taken is reported, not overwritten, and not bound twice
     expect(report.keys.conflicts).toEqual([
-      expect.objectContaining({ presentation: 'dock', key: 'f7', section: 'global', taken: 'tab.new' }),
+      expect.objectContaining({ presentation: 'dock', key: 'f8', section: 'global', taken: 'tab.new' }),
     ]);
-    expect(report.keys.added.map((b) => b.presentation)).toEqual(['drawer', 'overlay']);
+    expect(report.keys.added.map((b) => b.presentation)).toEqual(['overlay']);
     expect(JSON.stringify(keys)).not.toContain('session-stats-dock');
     // the keys of the layout the developer uses work in the clone too (a section applies only
     // while its layout shows): copied into the clone's section, where a key it already has stays
@@ -190,18 +189,17 @@ describe('install into herdr', () => {
     expect(keys['layout:main-stats']).toEqual({
       'cmd-shift-r': 'mine.own',
       'cmd-shift-g': 'review-toggle.gitlab',
-      f8: `${MOD_NAME}.drawer`,
     });
     expect(report.keys.copied).toEqual([{ key: 'cmd-shift-g', action: 'review-toggle.gitlab' }]);
   });
 
   test('a key taken in the layout section or the terminal section is a conflict too', () => {
-    const layoutTaken = { ...KEYS, 'layout:main-stats': { f7: 'tab.new' } };
+    const layoutTaken = { ...KEYS, 'layout:main-stats': { f8: 'tab.new' } };
     put(join(home, 'keys.json'), `${JSON.stringify(layoutTaken, null, 2)}\n`);
     expect(run().keys.conflicts.map((c) => c.section)).toEqual(['layout:main-stats']);
 
     // the terminal section wins over the layout's, so the key would never reach the dock
-    put(join(home, 'keys.json'), `${JSON.stringify({ ...KEYS, terminal: { ...KEYS.terminal, f7: 'send:x' } }, null, 2)}\n`);
+    put(join(home, 'keys.json'), `${JSON.stringify({ ...KEYS, terminal: { ...KEYS.terminal, f8: 'send:x' } }, null, 2)}\n`);
     const report = run();
     expect(report.keys.conflicts.map((c) => [c.section, c.taken])).toEqual([['terminal', 'send:x']]);
   });
@@ -217,7 +215,7 @@ describe('install into herdr', () => {
     expect(read(join(home, 'keys.json'))).toBe(keysFirst);
     expect(report.mod).toEqual({ written: [], removed: [] });
     expect(report.layout).toMatchObject({ name: 'main-stats', created: false, changed: false });
-    expect(report.keys).toEqual({ added: [], copied: [], conflicts: [] });
+    expect(report.keys).toEqual({ added: [], copied: [], conflicts: [], removed: [] });
   });
 
   test('a run from the clone itself does not clone the clone', () => {
@@ -264,83 +262,16 @@ describe('three presentations of the one mod', () => {
     const clone = readJson(join(home, 'layouts', 'main-stats.json'));
     // the key runs layout.toggle on the id of the block the clone holds, and only in that layout
     // (the developer's own keys for the layout are copied beside it)
-    const action = keys['layout:main-stats'].f7;
-    const key = 'f7';
+    const action = keys['layout:main-stats'].f8;
+    const key = 'f8';
     const [command, id] = action.split(':');
     expect(command).toBe('layout.toggle');
     expect(ids(clone).filter((x) => x === id)).toHaveLength(1);
     expect(find(clone, id).type).toBe('block');
     expect(find(clone, id).content).toEqual({ mod: MOD_NAME });
-    expect(keys.global.f7).toBeUndefined();
+    expect(keys.global.f8).toBeUndefined();
     expect(report.keys.added).toContainEqual(expect.objectContaining({ presentation: 'dock', key, section: 'layout:main-stats', action }));
     expect(report.keys.conflicts).toEqual([]);
-  });
-
-  test('drawer is a floating peek block', () => {
-    run();
-
-    const clone = readJson(join(home, 'layouts', 'main-stats.json'));
-    // a floating block over the root, on a side edge, with a peek width; it names the mod and
-    // does not ask to start hidden
-    expect(clone.floating).toHaveLength(1);
-    const [drawer] = clone.floating;
-    expect(drawer.content).toEqual({ mod: MOD_NAME });
-    expect(drawer.edge).toBe('right');
-    expect(drawer.peek).toBeGreaterThan(0);
-    expect(drawer.hidden).toBeUndefined();
-    // its id is its own: not the docked block's
-    expect(ids(clone).filter((x) => x === drawer.id)).toHaveLength(1);
-    expect(drawer.id).not.toBe('session-stats-dock');
-    // the developer's layout is not the one that holds it
-    expect(readJson(join(home, 'layouts', 'main.json')).floating).toBeUndefined();
-  });
-
-  test('drawer key toggles drawer block', () => {
-    const report = run();
-
-    const keys = readJson(join(home, 'keys.json'));
-    // `layout.toggle` cannot find a floating block, so the drawer's key is the mod's own command,
-    // which the drawer copy handles; bound in the clone's section only
-    const key = 'f8';
-    const action = `${MOD_NAME}.${DRAWER_COMMAND}`;
-    expect(keys['layout:main-stats'][key]).toBe(action);
-    expect(keys.global[key]).toBeUndefined();
-    expect(JSON.stringify(keys)).not.toContain('layout.toggle:session-stats-drawer');
-    expect(report.keys.added).toContainEqual(expect.objectContaining({ presentation: 'drawer', key, section: 'layout:main-stats', action }));
-    // a fresh install replaced nothing
-    expect(report.keys.added.every((b) => b.replaced === undefined)).toBe(true);
-    expect(report.keys.conflicts).toEqual([]);
-
-    // a home installed before has this mod's earlier binding on the key: it is upgraded in
-    // place, once, and the next run changes nothing
-    const old = readJson(join(home, 'keys.json'));
-    old['layout:main-stats'][key] = 'layout.toggle:session-stats-drawer';
-    put(join(home, 'keys.json'), `${JSON.stringify(old, null, 2)}\n`);
-    const upgraded = run();
-    expect(readJson(join(home, 'keys.json'))['layout:main-stats'][key]).toBe(action);
-    expect(upgraded.keys.added).toEqual([expect.objectContaining({ presentation: 'drawer', key, action, replaced: 'layout.toggle:session-stats-drawer' })]);
-    expect(upgraded.keys.conflicts).toEqual([]);
-    const settled = snapshot(home);
-    expect(run().keys).toEqual({ added: [], copied: [], conflicts: [] });
-    expect(snapshot(home)).toEqual(settled);
-
-    // any other binding on the key is the developer's: kept, and reported
-    const mine = readJson(join(home, 'keys.json'));
-    mine['layout:main-stats'][key] = 'mine.own';
-    put(join(home, 'keys.json'), `${JSON.stringify(mine, null, 2)}\n`);
-    const kept = run();
-    expect(readJson(join(home, 'keys.json'))['layout:main-stats'][key]).toBe('mine.own');
-    expect(kept.keys.conflicts).toEqual([expect.objectContaining({ presentation: 'drawer', key, section: 'layout:main-stats', taken: 'mine.own' })]);
-  });
-
-  test('a drawer key that is taken is reported, the dock key still goes in', () => {
-    put(join(home, 'keys.json'), `${JSON.stringify({ ...KEYS, global: { ...KEYS.global, f8: 'tab.new' } }, null, 2)}\n`);
-
-    const report = run();
-
-    expect(report.keys.conflicts).toEqual([expect.objectContaining({ presentation: 'drawer', key: 'f8', section: 'global', taken: 'tab.new' })]);
-    expect(report.keys.added.map((b) => b.presentation)).toEqual(['dock', 'overlay']);
-    expect(readJson(join(home, 'keys.json')).global.f8).toBe('tab.new');
   });
 
   test('overlay key is mod.open', () => {
@@ -354,11 +285,11 @@ describe('three presentations of the one mod', () => {
     expect(keys.global[key]).toBe(`mod.open:${MOD_NAME}`);
     expect(keys['layout:main-stats']?.[key]).toBeUndefined();
     expect(keys['layout:main']?.[key]).toBeUndefined();
-    // and it needs no block: the overlay is not in the clone, which holds only the dock and the drawer
-    expect(ids(clone).sort()).toEqual([...ids(ACTIVE), 'session-stats-dock', 'session-stats-drawer'].sort());
+    // and it needs no block: the overlay is not in the clone, which holds only the dock
+    expect(ids(clone).sort()).toEqual([...ids(ACTIVE), 'session-stats-dock'].sort());
     expect(report.keys.added).toContainEqual(expect.objectContaining({ presentation: 'overlay', key, section: 'global', action: `mod.open:${MOD_NAME}` }));
     expect(report.keys.conflicts).toEqual([]);
-    // the key is its own: not the dock's or the drawer's
+    // the key is its own: not the dock's
     expect(new Set(PRESENTATIONS.map((p) => p.key)).size).toBe(PRESENTATIONS.length);
     // a layout that has none of the blocks still gets it
     const bare = mergeKeys({ global: {} }, bindingsFor('plain'));
@@ -369,7 +300,7 @@ describe('three presentations of the one mod', () => {
     put(join(home, 'keys.json'), `${JSON.stringify({ ...KEYS, global: { ...KEYS.global, f9: 'tab.new' } }, null, 2)}\n`);
     let report = run();
     expect(report.keys.conflicts).toEqual([expect.objectContaining({ presentation: 'overlay', key: 'f9', section: 'global', taken: 'tab.new' })]);
-    expect(report.keys.added.map((b) => b.presentation)).toEqual(['dock', 'drawer']);
+    expect(report.keys.added.map((b) => b.presentation)).toEqual(['dock']);
 
     // a layout section wins over `global` in its layout, so a key it holds would hide the overlay there
     rmSync(join(home, 'layouts', 'main-stats.json'));
@@ -380,23 +311,104 @@ describe('three presentations of the one mod', () => {
   });
 });
 
-describe('the three keys', () => {
-  test('adds dock, drawer and overlay keys', () => {
+describe('the two keys', () => {
+  test('adds dock and overlay keys', () => {
     const report = run();
 
     const keys = readJson(join(home, 'keys.json'));
-    expect(keys['layout:main-stats'].f7).toBe('layout.toggle:session-stats-dock');
-    expect(keys['layout:main-stats'].f8).toBe(`${MOD_NAME}.drawer`);
+    expect(keys['layout:main-stats'].f8).toBe('layout.toggle:session-stats-dock');
+    expect(keys['layout:main-stats'].f7).toBeUndefined();
     expect(keys.global.f9).toBe(`mod.open:${MOD_NAME}`);
     expect(report.keys.added.map((b) => [b.presentation, b.key])).toEqual([
-      ['dock', 'f7'],
-      ['drawer', 'f8'],
+      ['dock', 'f8'],
       ['overlay', 'f9'],
     ]);
     expect(report.keys.conflicts).toEqual([]);
+    expect(report.keys.removed).toEqual([]);
     // the developer's own bindings are kept
     expect(keys.global).toMatchObject(KEYS.global);
     expect(keys.terminal).toEqual(KEYS.terminal);
+  });
+});
+
+describe('an earlier install', () => {
+  // what the install before the drawer's removal left: the clone with the drawer block, and
+  // keys with this mod's own `f7` dock and `f8` drawer-command bindings, beside the developer's
+  const earlier = () => {
+    const clone = {
+      ...ACTIVE,
+      children: [
+        ...ACTIVE.children,
+        { id: 'session-stats-dock', type: 'block', size: { px: 320 }, min: 200, max: 640, content: { mod: MOD_NAME } },
+      ],
+      floating: [
+        { id: 'notes', content: { mod: 'notes' }, edge: 'left', align: 'center' },
+        { id: 'session-stats-drawer', content: { mod: MOD_NAME }, edge: 'right', align: 'center', peek: 72 },
+      ],
+    };
+    put(join(home, 'layouts', 'main-stats.json'), `${JSON.stringify(clone, null, 2)}\n`);
+    const keys = {
+      ...KEYS,
+      'layout:main-stats': {
+        'cmd-shift-r': 'review-toggle.reviewer',
+        f7: 'layout.toggle:session-stats-dock',
+        f8: `${MOD_NAME}.drawer`,
+        f10: 'mine.own',
+      },
+      global: { ...KEYS.global, f9: `mod.open:${MOD_NAME}` },
+    };
+    put(join(home, 'keys.json'), `${JSON.stringify(keys, null, 2)}\n`);
+  };
+
+  test('an earlier install is cleaned up', () => {
+    earlier();
+
+    const report = run();
+
+    const clone = readJson(join(home, 'layouts', 'main-stats.json'));
+    // the drawer block goes, the dock stays, and the developer's own floating block is kept
+    expect(ids(clone)).not.toContain('session-stats-drawer');
+    expect(ids(clone)).toContain('session-stats-dock');
+    expect(clone.floating.map((b) => b.id)).toEqual(['notes']);
+    const keys = readJson(join(home, 'keys.json'));
+    // this mod's own two bindings go, the dock is on `f8`, and the developer's own are kept
+    expect(keys['layout:main-stats']).toEqual({
+      'cmd-shift-r': 'review-toggle.reviewer',
+      f10: 'mine.own',
+      f8: 'layout.toggle:session-stats-dock',
+    });
+    expect(keys.global.f9).toBe(`mod.open:${MOD_NAME}`);
+    expect(report.layout).toMatchObject({ name: 'main-stats', created: false, changed: true });
+    expect(report.keys.removed).toEqual([
+      { section: 'layout:main-stats', key: 'f7', action: 'layout.toggle:session-stats-dock' },
+      { section: 'layout:main-stats', key: 'f8', action: `${MOD_NAME}.drawer` },
+    ]);
+    expect(report.keys.added.map((b) => [b.presentation, b.key])).toEqual([['dock', 'f8']]);
+    expect(report.keys.conflicts).toEqual([]);
+
+    // the second run writes nothing
+    const settled = snapshot(home);
+    const again = run();
+    expect(snapshot(home)).toEqual(settled);
+    expect(again.layout).toMatchObject({ created: false, changed: false });
+    expect(again.keys).toEqual({ added: [], copied: [], conflicts: [], removed: [] });
+  });
+
+  test('a binding of the developer\'s is never taken back, even on the old keys', () => {
+    earlier();
+    // the developer's own bindings on `f7` and `f8` hold other actions: they stay, and the dock
+    // key that is taken is reported
+    const keys = readJson(join(home, 'keys.json'));
+    keys['layout:main-stats'].f7 = 'mine.seven';
+    keys['layout:main-stats'].f8 = 'mine.eight';
+    put(join(home, 'keys.json'), `${JSON.stringify(keys, null, 2)}\n`);
+
+    const report = run();
+
+    const after = readJson(join(home, 'keys.json'));
+    expect(after['layout:main-stats']).toMatchObject({ f7: 'mine.seven', f8: 'mine.eight', f10: 'mine.own' });
+    expect(report.keys.removed).toEqual([]);
+    expect(report.keys.conflicts).toEqual([expect.objectContaining({ presentation: 'dock', key: 'f8', section: 'layout:main-stats', taken: 'mine.eight' })]);
   });
 });
 
