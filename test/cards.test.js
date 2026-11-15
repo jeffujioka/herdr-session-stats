@@ -169,6 +169,24 @@ describe('cards', () => {
     expect(calls.filter((c) => c.command === 'head')).toEqual([]);
   });
 
+  test('a session file whose time is unchanged has its title read once', async () => {
+    const older = { name: 'older.jsonl', mtimeMs: NOW - 30 * 60_000, size: 10 };
+    const world = localWorld({ sessions: { [SESSION_DIR]: [older, SESSION] }, titles: { [older.name]: 'FACT', [SESSION.name]: '' } });
+    const { build, calls } = builder(world);
+    const panes = [pane({ pane: 'a', terminal: 't1' }), pane({ pane: 'b', terminal: 't2' })];
+    const heads = () => calls.filter((c) => c.command === 'head').length;
+
+    await build(panes, NOW);
+    expect(heads()).toBe(2);
+    await build(panes, NOW + 2000);
+    expect(heads()).toBe(2);
+
+    // a file written since is read again, the other one is not
+    older.mtimeMs += 60_000;
+    await build(panes, NOW + 4000);
+    expect(heads()).toBe(3);
+  });
+
   test('an unsupported harness shows its name and n/a figures', async () => {
     const { build } = builder(localWorld());
     const [card] = await build([pane({ app: 'claude-code' })], NOW);
