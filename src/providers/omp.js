@@ -17,7 +17,8 @@
 // partial stats` (`now` is epoch ms; only a figure that measures from the present reads it). A
 // later figure is one more function in a list, so adding a figure never rewrites an earlier one.
 
-import { add, isNumber, parseEntries, tally } from './jsonl.js';
+import { add, parseEntries, tally } from './jsonl.js';
+import { burnRate, cacheRate, isNumber } from './shared.js';
 
 // A fresh accumulator. Sums are `tally`s: undefined until an entry carries the value.
 function emptyState() {
@@ -100,14 +101,6 @@ function tokens({ totalTokens }) {
 // Cost the harness logged (D5); no price table.
 function cost({ costUsd }) {
   return costUsd.sum === undefined ? {} : { costUsd: costUsd.sum };
-}
-
-// Hit rate is over the session's token counts (D6); it needs all three counts to be logged
-// and a non-zero total.
-function cacheRate({ input, cacheRead, cacheWrite }) {
-  if (input.sum === undefined || cacheRead.sum === undefined || cacheWrite.sum === undefined) return {};
-  const total = input.sum + cacheRead.sum + cacheWrite.sum;
-  return total > 0 ? { cacheHitRate: cacheRead.sum / total } : {};
 }
 
 // A turn is a hit when its cacheRead is above 0 and a miss when it is 0 (D6); a turn that
@@ -212,18 +205,8 @@ function context({ assistants, sources }) {
   return figures;
 }
 
-// Burn rate is derived from the session's own duration, cost and token figures; a session
-// that has not lasted (duration 0) or lacks the input reads n/a.
-function burnRate(state) {
-  const { durationMs } = duration(state);
-  if (!(durationMs > 0)) return {};
-  const { costUsd } = cost(state);
-  const { totalTokens } = tokens(state);
-  const figures = {};
-  if (costUsd !== undefined) figures.burnCostPerHour = costUsd / (durationMs / 3600000);
-  if (totalTokens !== undefined) figures.burnTokensPerMin = totalTokens / (durationMs / 60000);
-  return figures;
-}
+// Burn rate from the session's own duration, cost and token figures.
+const burn = (state) => burnRate({ ...duration(state), ...cost(state), ...tokens(state) });
 
 // Time since the last message entry, by its ISO timestamp, like the duration.
 function sinceActivity({ messages }, now) {
@@ -249,7 +232,7 @@ function premium({ premiumRequests }) {
   return premiumRequests.sum === undefined ? {} : { premiumRequests: premiumRequests.sum };
 }
 
-const TOTALS = [duration, tokens, cost, cacheRate, cacheTurns, burnRate, thinking, premium];
+const TOTALS = [duration, tokens, cost, cacheRate, cacheTurns, burn, thinking, premium];
 const LATEST = [model, cacheExpiry, context, sinceActivity, latency];
 
 // `input` is the jsonl text, or `{ text, sources, state }`:

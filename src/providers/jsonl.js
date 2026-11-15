@@ -1,5 +1,7 @@
 // Helpers shared by the providers that read a jsonl session.
 
+import { isNumber } from './shared.js';
+
 // Entries of a jsonl text, one per line that is whole JSON and an object; any other line (a
 // window can start mid-line, a file can end mid-write) carries no figure and is skipped.
 export function parseEntries(text) {
@@ -15,8 +17,6 @@ export function parseEntries(text) {
   }
   return entries;
 }
-
-export const isNumber = (value) => typeof value === 'number' && Number.isFinite(value);
 
 // A running sum that tells "no value seen" from "values that add to 0": `sum` is undefined
 // until a number is added, so a figure no entry carries reads n/a, never 0. `add` takes

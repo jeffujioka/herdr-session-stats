@@ -9,7 +9,7 @@
 // Structure as omp.js: `parseSession` makes one `session` value; each entry of `FIGURES` is a
 // function `(session, now) => partial stats`.
 
-const isNumber = (value) => typeof value === 'number' && Number.isFinite(value);
+import { burnRate, isNumber } from './shared.js';
 
 function parseSession({ messages, compactions }) {
   const rows = Array.isArray(messages) ? messages : [];
@@ -100,16 +100,8 @@ function context({ turns }) {
   return sizes.length ? { contextTokens: sizes.at(-1) } : {};
 }
 
-function burnRate(session) {
-  const { durationMs } = duration(session);
-  if (!(durationMs > 0)) return {};
-  const { costUsd } = cost(session);
-  const { totalTokens } = tokens(session);
-  const figures = {};
-  if (costUsd !== undefined) figures.burnCostPerHour = costUsd / (durationMs / 3600000);
-  if (totalTokens !== undefined) figures.burnTokensPerMin = totalTokens / (durationMs / 60000);
-  return figures;
-}
+// Burn rate from the session's own duration, cost and token figures.
+const burn = (session) => burnRate({ ...duration(session), ...cost(session), ...tokens(session) });
 
 function sinceActivity(session, now) {
   const range = span(session);
@@ -139,7 +131,7 @@ const FIGURES = [
   cacheTurns,
   autocompactions,
   context,
-  burnRate,
+  burn,
   sinceActivity,
   latency,
   thinking,

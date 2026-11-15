@@ -1,7 +1,19 @@
-// Finding a harness's session files: shared by the providers' `createSessions` hooks.
-// Runtime-neutral: it takes the app's `exec` bound to a machine and runs only `find` with `stat`.
+// Finding a harness's session files and keeping the readers of them: shared by the providers'
+// `createSessions` hooks. Runtime-neutral: it takes the app's `exec` bound to a machine and runs
+// only `find` with `stat`, and `tail` and `dd` through the session reader (src/refresh.js).
 
+import { createSessionReader } from '../refresh.js';
 import { linkSession } from '../session-link.js';
+
+// `readerOn(machine)` of one hook: the reader that keeps that machine's per-file totals, made
+// on first use. `execOn(machine)` is the app's `exec` bound to a machine, `fold` the provider's.
+export function sessionReaders(execOn, fold) {
+  const readers = new Map();
+  return (machine) => {
+    if (!readers.has(machine)) readers.set(machine, createSessionReader({ exec: execOn(machine), fold }));
+    return readers.get(machine);
+  };
+}
 
 // Lines of `stat` as `<mtime seconds> <size> <path>`; anything else is skipped.
 export function parseSessionFiles(stdout) {

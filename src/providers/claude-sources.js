@@ -4,9 +4,8 @@
 // Runtime-neutral: it takes the app's `exec` bound to a machine, and runs only read-only
 // programs there: `find` with `stat`, and `tail` and `dd` (through the session reader).
 
-import { createSessionReader } from '../refresh.js';
 import { claudeProvider } from './claude.js';
-import { findSessionFile } from './session-files.js';
+import { findSessionFile, sessionReaders } from './session-files.js';
 
 // Name of Claude Code's session folder for a working folder (docs/claude-session-format.md):
 // the path with every character that is not a letter or a digit turned into `-`. Claude Code
@@ -19,11 +18,7 @@ export function sessionDirSlug(cwd) {
 // `execOn(machine)`: the app's `exec` bound to a machine (null: this computer), with its timeout.
 export function createClaudeSessions({ execOn }) {
   // machine -> the reader that keeps that machine's per-file totals
-  const readers = new Map();
-  function readerOn(machine) {
-    if (!readers.has(machine)) readers.set(machine, createSessionReader({ exec: execOn(machine), fold: claudeProvider.fold }));
-    return readers.get(machine);
-  }
+  const readerOn = sessionReaders(execOn, claudeProvider.fold);
 
   return {
     // The session file the pane's folder links to (`{ path, mtimeMs, size }`), or null. Only

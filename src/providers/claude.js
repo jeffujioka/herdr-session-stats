@@ -12,7 +12,8 @@
 // from the text (the tail), which `parseTail` turns into one `session` value; each entry of
 // `LATEST` is a function `(session, now) => partial stats`.
 
-import { add, isNumber, parseEntries, tally } from './jsonl.js';
+import { add, parseEntries, tally } from './jsonl.js';
+import { burnRate, cacheRate, isNumber } from './shared.js';
 
 // A user entry that carries a tool's result continues a turn; any other (not meta) one starts it.
 const isPrompt = ({ message, isMeta }) =>
@@ -149,14 +150,6 @@ function tokens({ totalTokens }) {
   return totalTokens.sum === undefined ? {} : { totalTokens: totalTokens.sum };
 }
 
-// Hit rate is over the session's token counts (D6); it needs all three counts to be logged
-// and a non-zero total.
-function cacheRate({ input, cacheRead: read, cacheWrite: write }) {
-  if (input.sum === undefined || read.sum === undefined || write.sum === undefined) return {};
-  const total = input.sum + read.sum + write.sum;
-  return total > 0 ? { cacheHitRate: read.sum / total } : {};
-}
-
 // A response is a hit when its cache read is above 0 and a miss when it is 0 (D6); one that
 // logged no cache read is neither.
 // (`cacheHits` is a tally that gets a 0 or a 1 for every response that `cacheReads` counts.)
@@ -207,14 +200,9 @@ function cost({ logged }) {
   return logged && !logged.stale && isNumber(logged.usd) ? { costUsd: logged.usd } : {};
 }
 
-// Token burn is derived from the session's own duration and token figures; a session that has
-// not lasted (duration 0) or lacks the input reads n/a. A cost per hour would divide a total
-// logged at save time by the time read here, so there is none.
-function burnRate(state) {
-  const { durationMs } = duration(state);
-  const { totalTokens } = tokens(state);
-  return durationMs > 0 && totalTokens !== undefined ? { burnTokensPerMin: totalTokens / (durationMs / 60000) } : {};
-}
+// Token burn from the session's own duration and token figures. A cost per hour would divide
+// a total logged at save time by the time read here, so there is none.
+const burn = (state) => burnRate({ ...duration(state), ...tokens(state) });
 
 // Time since the last message entry, by its ISO timestamp, like the duration.
 function sinceActivity({ messages }, now) {
@@ -230,7 +218,7 @@ function latency({ messages }) {
   return reply < 0 || began < 0 ? {} : { latencyMs: messages[reply].time - messages[began].time };
 }
 
-const TOTALS = [duration, tokens, cacheRate, cacheTurns, cost, burnRate];
+const TOTALS = [duration, tokens, cacheRate, cacheTurns, cost, burn];
 const LATEST = [model, cacheExpiry, context, sinceActivity, latency];
 
 // `input` is the jsonl text, or `{ text, sources, state }`:
