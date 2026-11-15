@@ -53,8 +53,9 @@ Not in the session files; found in omp's model catalogue. `~/.omp/agent/models.d
 Not in the session files; it is computed by omp from its settings and the model's window (omp 18.20.2 strings, function `Hx`: compact when the context tokens exceed the trigger).
 
 - Settings: `compaction.thresholdTokens` (a token count) and `compaction.thresholdPercent` (a percentage of the window), and `compaction.reserveTokens`. `omp config get` shows `compaction.thresholdTokens` and `compaction.thresholdPercent` as `-1` and `compaction.reserveTokens` as not set; `~/.omp/agent/config.yml` holds no compaction key.
-- With a positive `thresholdTokens` the trigger is that count (capped under the window). With a positive `thresholdPercent` it is `floor(window * percent / 100)`. With both at `-1` (the default here) it is `window - reserve`, where the reserve is derived inside omp from the window and `reserveTokens` (a 15% of the window rule and a 16,384 default were visible in the code). That formula is internal and can change between omp versions.
-- Decision for Task 1.4: the trigger point is known only when `config.yml` sets `compaction.thresholdTokens` or `compaction.thresholdPercent` explicitly; with the default settings it is **not found** and the headroom reads `n/a`. The mod does not copy omp's internal reserve formula, since a wrong copy would be an invented figure (D4).
+- With a positive `thresholdTokens` below the window the trigger is that count (a count at or past the window compacts like the default). Otherwise, with a positive `thresholdPercent`, it is `floor(window * clamp(percent, 1, 99) / 100)`. With neither set (the default; `omp config get` shows both as `-1`) it is `window - reserve`, where `reserve = max(floor(window * 0.15), reserveTokens ?? 16384)`. omp's own documentation states this rule (`omp://compaction.md`, "Settings and defaults"), and the 18.20.2 code agrees; on a 1M window the trigger is 850,000.
+- The mod computes that default (`reserveTrigger` in `src/providers/omp.js`) and reads the settings it needs from `~/.omp/agent/config.yml` only (`parseCompactionConfig` in `src/providers/omp-sources.js`); project-level config files are not read, so a setting made only there is not seen.
+- The trigger is left unknown, and the headroom reads `n/a`, where the mod does not evaluate omp's rule: `config.yml` unreadable or using YAML the reader does not understand; `compaction.enabled` false; a `modelThresholds` entry that matches the model (unless `modelThresholdsEnabled` is false); the unset default on a window whose 15% is under 16,384 (omp's documentation says only that a proportional reserve is used there, not where that starts); and a reserve that reaches the whole window. A wrong copy would be an invented figure (D4), so these are not guessed.
 
 ## D8 (d): meaning of `usage.cttl`
 
@@ -62,8 +63,8 @@ Found in real files, and it differs from the spec's guess. `cttl` is an object `
 
 - The key names the cache lifetime class of the tokens written in the turn (`ephemeral5m`, a 5-minute prompt cache); the value is how many tokens were written under that class, not a duration.
 - So the lifetime is read from the key: `ephemeral5m` is 5 minutes. A `cttl` with no key the provider knows, or no `cttl`, gives `n/a` for the countdown. No other key (such as a 1-hour class) appears in the files seen.
-- The cache goes cold at `message.completedAt + 5 min` (fall back to `message.timestamp` plus `duration`; if neither is there, `n/a`). The countdown uses the last assistant turn with a `cttl`.
-- A turn with `cacheWrite` 0 has no `cttl`, and every turn with `cttl` has `cacheWrite` above 0 (all 22 messages without `cttl` have `cacheWrite` 0): a cache written earlier is still warm, but the figure counts from the last turn that has one, and the mod does not guess beyond it.
+- The cache goes cold at `message.completedAt + 5 min` (fall back to `message.timestamp` plus `duration`; if neither is there, `n/a`). The countdown uses only the last assistant turn's own `cttl`: when that turn has none, the countdown reads `n/a`.
+- A turn with `cacheWrite` 0 has no `cttl`, and every turn with `cttl` has `cacheWrite` above 0 (all 22 messages without `cttl` have `cacheWrite` 0). A cache written by an earlier turn may still be warm, but the mod does not guess beyond the last turn, so the figure reads `n/a` after such a turn.
 
 ## The stats shape
 
