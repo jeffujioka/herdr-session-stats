@@ -91,7 +91,12 @@ describe('cards', () => {
 
   test('no agent no card', async () => {
     const { build, calls } = builder(localWorld());
-    const panes = [pane({ pane: 'p1', app: null, status: null }), pane({ pane: 'p2', terminal: null, app: null, mod: 'files' })];
+    // a terminal that still reports `app` after its agent exited has no status
+    const panes = [
+      pane({ pane: 'p1', app: null, status: null }),
+      pane({ pane: 'p2', terminal: null, app: null, mod: 'files' }),
+      pane({ pane: 'p3', terminal: 't3', app: 'omp', status: null }),
+    ];
     expect(agentPanes(panes)).toEqual([]);
     expect(await build(panes, NOW)).toEqual([]);
     expect(calls).toEqual([]);

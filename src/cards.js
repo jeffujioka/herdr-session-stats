@@ -37,10 +37,11 @@ export function harnessName(app) {
 // Stats of a card with no session to read: every figure n/a, the harness named.
 const unlinked = (app) => ({ ...readStats('', null, 0), harness: app });
 
-// The panes that get a card: terminals in which herdr detected an agent. A mod pane has no
-// terminal, and a terminal with no agent reports no app.
+// The panes that get a card: terminals in which herdr detected an agent that is running. A
+// mod pane has no terminal; a terminal with no agent reports no app; and herdr keeps `app` on
+// a terminal after its agent exited, but then the status is null (a live agent reports one).
 export function agentPanes(panes) {
-  return panes.filter((pane) => pane.terminal != null && pane.app);
+  return panes.filter((pane) => pane.terminal != null && pane.app && pane.status != null);
 }
 
 // The panes of the shown space, in all of its tabs: `spaces` is herdr's `spaces()` (each with
