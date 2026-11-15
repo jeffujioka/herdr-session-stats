@@ -8,28 +8,25 @@ One card per agent pane of the shown space (a terminal in which herdr detected o
 or opencode and reports an agent status, so a terminal whose agent has exited gets none, in any
 tab of that space; panes of other spaces get none), in pane order,
 refreshed every 2 seconds from read-only reads of the harness's own session files
-(opencode: its database). A card has the harness name, the pane's folder, its git branch and
-origin, and these rows:
+(opencode: its database). A card has five groups, always in this order so cards do not jump:
 
-| Row | Meaning |
+| Group | Shows |
 | --- | --- |
-| Model | model of the latest reply |
-| Duration | first to last message of the session |
-| Tokens | tokens used by the session |
-| Context | context used, as a share of the model's window, and the window (`25%/200k`) |
-| Headroom | tokens left before the harness autocompacts |
-| Compactions | compactions recorded in the session |
-| Cache hit | share of prompt tokens served from the cache, and the turns that hit or missed it |
-| Cache left | time until the prompt cache is cold (`cold` once it is) |
-| Cost | cost the harness logged; there is no price table |
-| Burn | cost per hour and tokens per minute of the session |
-| Activity | time since the last message |
-| Latency | last turn: the reply minus the message that began it |
-| Thinking | thinking level of the session |
-| Premium | premium requests used |
+| Identity | a dot in the agent's status color (working, blocked, done, idle), the folder's name and the status word; the path (home as `~`); the git branch and remote (`github.com/org/repo`) and, for a pane on another machine, the machine; the harness and the model |
+| Context | the usage as a percent of the model's window, in a gauge with a tick at the point where the harness autocompacts; tokens used, tokens left before compaction, compactions recorded |
+| Spend | the cost the harness logged (there is no price table), cost per hour, tokens used by the session, tokens per minute |
+| Cache | the time until the prompt cache is cold (`cold` once it is), and the hit rate with the turns that hit and missed it |
+| Activity | session duration (first to last message), time since the last message, last turn (the reply minus the message that began it), thinking level, premium requests used |
 
-A figure the session does not give reads `n/a`; the mod never estimates one, and a harness
-that does not log a figure reads `n/a` for it.
+The card is drawn in the theme's own colors. The context gauge is the accent color, yellow from
+75% of the compaction trigger and red from 90% (with no known trigger: from 70% and 85% of the
+window); the cache time is the accent color, yellow at 60 seconds or less and when cold. The
+card of the focused pane has an accent border. Figures are set in the terminal's monospace font
+(`font_family` of the settings) so digits line up. The docked column draws the groups one under
+the other; the popup draws the four groups under identity two by two.
+
+A figure the session does not give reads `n/a` and is dimmed; the mod never estimates one, and
+a harness that does not log a figure reads `n/a` for it.
 
 ## Keys
 
@@ -47,7 +44,7 @@ keys as standard function keys" in the keyboard settings.
 The mod ties a pane to a session by the pane's folder: it takes the newest-modified session
 file of that folder for the pane's harness, however long ago it changed. A pane with an agent
 has that agent running, so its session is the newest one, and an idle session shows its figures
-and its idle time (the Activity row). A folder with no session file is not linked, and every
+and its idle time (the Activity group). A folder with no session file is not linked, and every
 session figure on its card reads `n/a`. Between an agent's start and its first written message
 the card shows the figures and idle time of the folder's previous conversation, since that is
 still the newest session. The mod never estimates a figure.

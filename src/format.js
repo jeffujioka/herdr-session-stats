@@ -19,14 +19,6 @@ export function formatCost(usd) {
   return usd === NA ? NA : `$${usd.toFixed(2)}`;
 }
 
-// Context as usage percent over the maximum window, "25%/200k". Without the maximum nothing
-// can be shown, so it reads 'n/a'; with the maximum but no usage it reads "n/a of 200k".
-export function formatContext({ contextPercent, contextMax }) {
-  if (contextMax === NA) return NA;
-  if (contextPercent === NA) return `${NA} of ${formatTokens(contextMax)}`;
-  return `${formatPercent(contextPercent)}/${formatTokens(contextMax)}`;
-}
-
 // Text of a duration: "450ms", "12s", "1m 30s", "1h 05m". Takes a number or 'n/a'.
 export function formatDuration(ms) {
   if (ms === NA) return NA;
@@ -38,35 +30,34 @@ export function formatDuration(ms) {
   return `${Math.floor(seconds / 3600)}h ${pad(Math.floor(seconds / 60) % 60)}m`;
 }
 
-const via = (value, format) => (value === NA ? NA : format(value));
+// A figure formatted, or 'n/a' when it is not known.
+export const orNa = (value, format) => (value === NA ? NA : format(value));
 
-// What the card draws, as text: its harness, its place lines (the folder, and the branch and
-// origin when it has them) and its `[label, value]` rows. A figure that cannot be read is 'n/a'.
-export function describeCard({ folder, branch, origin, harnessName, stats }) {
-  const hasCounts = stats.cacheHits !== NA && stats.cacheMisses !== NA;
-  const rate = formatPercent(stats.cacheHitRate);
-  const burn =
-    stats.burnCostPerHour === NA && stats.burnTokensPerMin === NA
-      ? NA
-      : `${via(stats.burnCostPerHour, (c) => `$${c.toFixed(2)}/h`)}, ${via(stats.burnTokensPerMin, (t) => `${formatTokens(Math.round(t))} tok/min`)}`;
-  return {
-    title: harnessName,
-    place: [folder, branch, origin].filter(Boolean),
-    rows: [
-      ['Model', stats.model],
-      ['Duration', formatDuration(stats.durationMs)],
-      ['Tokens', via(stats.totalTokens, formatTokens)],
-      ['Context', formatContext(stats)],
-      ['Headroom', via(stats.headroomTokens, formatTokens)],
-      ['Compactions', via(stats.autocompactions, String)],
-      ['Cache hit', hasCounts ? `${rate} (${stats.cacheHits} hit, ${stats.cacheMisses} miss)` : rate],
-      ['Cache left', via(stats.cacheLeftMs, (ms) => (ms === 0 ? 'cold' : formatDuration(ms)))],
-      ['Cost', formatCost(stats.costUsd)],
-      ['Burn', burn],
-      ['Activity', via(stats.sinceActivityMs, (ms) => `${formatDuration(ms)} ago`)],
-      ['Latency', formatDuration(stats.latencyMs)],
-      ['Thinking', stats.thinkingLevel],
-      ['Premium', via(stats.premiumRequests, String)],
-    ],
-  };
+// A folder's own name, the last part of its path: "/Users/me/app" is "app". The root is "/".
+export function formatFolderName(folder) {
+  if (folder == null) return NA;
+  const path = folder.replace(/\/+$/, '');
+  return path === '' ? '/' : path.slice(path.lastIndexOf('/') + 1);
+}
+
+// A folder's path for reading: the start that is `home` is written "~". `home` is null for a
+// folder on a machine whose home is not known, which is written in full.
+export function formatHomePath(folder, home) {
+  if (folder == null) return NA;
+  if (home && (folder === home || folder.startsWith(`${home}/`))) return `~${folder.slice(home.length)}`;
+  return folder;
+}
+
+// A git remote's URL for reading: without the scheme, the user (credentials are masked
+// already) and the `.git` end, and an scp-style `host:path` written `host/path`:
+// "git@github.com:org/repo.git" is "github.com/org/repo". null stays null.
+export function formatRemote(url) {
+  if (url == null) return null;
+  return url
+    .trim()
+    .replace(/^[a-z][a-z0-9+.-]*:\/\//i, '')
+    .replace(/^[^/@]*@/, '')
+    .replace(/^([^/:]+):(?!\d+\/)/, '$1/')
+    .replace(/\/+$/, '')
+    .replace(/\.git$/, '');
 }
