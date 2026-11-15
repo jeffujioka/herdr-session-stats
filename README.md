@@ -33,11 +33,14 @@ that does not log a figure reads `n/a` for it.
 
 The install binds three keys, one for each way to show the same mod (see Install):
 
-- `ctrl-shift-s` toggles the docked block, a column on the right with the full cards;
-- `ctrl-shift-d` toggles the drawer, a floating block on the right edge that peeks; its cards
+- `f7` toggles the docked block, a column on the right with the full cards;
+- `f8` toggles the drawer, a floating block on the right edge that peeks; its cards
   are compact rows with the context used and the cost first, which show while it peeks;
-- `ctrl-shift-a` opens the popup, a larger dialog that draws each card roomy; pressed again it
+- `f9` opens the popup, a larger dialog that draws each card roomy; pressed again it
   closes.
+
+On a Mac keyboard F7-F9 can be media keys: press Fn with them, or turn on "Use F1, F2, etc.
+keys as standard function keys" in the keyboard settings.
 
 ## How a pane is tied to a session
 
@@ -66,9 +69,9 @@ agents apart, run them in different folders.
   the drawer as a floating block on the right edge that peeks. Its root must be a row, as in
   herdr's own layouts; any other root is refused before anything is written. Show it with
   `herdr-app do layout.switch --name <active>-stats`;
-- three keys are added to `keys.json`: `ctrl-shift-s` toggles the docked block and
-  `ctrl-shift-d` the drawer (`layout.toggle`, in the clone's `layout:` section), and
-  `ctrl-shift-a` opens the popup (`mod.open`, in `global`, so it works in any layout; pressed
+- three keys are added to `keys.json`: `f7` toggles the docked block and
+  `f8` the drawer (`layout.toggle`, in the clone's `layout:` section), and
+  `f9` opens the popup (`mod.open`, in `global`, so it works in any layout; pressed
   again it closes). The popup is a larger dialog (`overlay` in `mod.json`) that draws each
   card roomy. Your bindings are kept; a key that is already taken (in its own section, in
   `global` or in `terminal`, and for the popup also in any `layout:` section, which would hide

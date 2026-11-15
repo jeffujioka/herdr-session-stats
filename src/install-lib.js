@@ -23,13 +23,13 @@ export const MOD_NAME = 'herdr-session-stats';
 // The docked block: a right-hand column at the top level of the clone.
 const DOCK_PX = 320;
 export const DOCK_BLOCK_ID = 'session-stats-dock';
-export const DOCK_KEY = 'ctrl-shift-s';
+export const DOCK_KEY = 'f7';
 
 // The drawer: a floating block over the root, on the right edge; only `DRAWER_PEEK_PX` of it
 // shows until it is hovered (herdr's `peek`).
 const DRAWER_PEEK_PX = 72;
 export const DRAWER_BLOCK_ID = 'session-stats-drawer';
-export const DRAWER_KEY = 'ctrl-shift-d';
+export const DRAWER_KEY = 'f8';
 
 function findNode(node, id) {
   if (node.id === id) return node;
@@ -72,7 +72,7 @@ function addDrawer(layout) {
 // The overlay: a popup the mod opens over everything. It has no block in any layout and so is
 // not added to the clone: its key is bound in `global` and runs `mod.open`, which opens the mod
 // and, pressed again, closes it. Its size is the `overlay` of the mod's mod.json.
-export const OVERLAY_KEY = 'ctrl-shift-a';
+export const OVERLAY_KEY = 'f9';
 
 // Each presentation is `{ id, key }`, and, when it is a block of a layout, `blockId` and
 // `addTo(layout)` as well (the dock and the drawer); one without a `blockId` is the overlay's kind.

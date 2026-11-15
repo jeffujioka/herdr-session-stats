@@ -1,6 +1,6 @@
 // Installs the mod into a herdr home: syncs the mod folder, copies it, clones the active layout
-// as `<active>-stats` with the docked block and the drawer, and merges the three keys (dock,
-// drawer, popup) into keys.json. All of the
+// as `<active>-stats` with the docked block and the drawer, and merges the three keys (f7 for
+// the dock, f8 for the drawer, f9 for the popup) into keys.json. All of the
 // logic is in src/install-lib.js; this is the command line over it, and node's files for it.
 //
 // Usage: bun scripts/install.js [--home <dir>]
