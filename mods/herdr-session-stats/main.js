@@ -19,69 +19,58 @@ function livePanes() {
 }
 
 // A full card. `roomy` is the overlay's: the same figures in larger type, the rows in two
-// columns, so the card uses the room of the larger dialog.
-function card(c, t, roomy) {
+// columns, so the card uses the room of the larger dialog. `strip` is the drawer's
+// (`{ side, px }`, src/adapt.js): the header row carries the key figures (context used, cost)
+// in a column of `px` on the edge side, and the rows below stop before it, so a peeking drawer
+// shows a column of key figures and an open one the whole card.
+function card(c, t, { roomy = false, strip = null } = {}) {
   const { title, place, rows } = describeCard(c);
   const [folder, ...git] = place;
   const [titleSize, placeSize, rowSize] = roomy ? [18, 14, 14] : [13, 11, 12];
-  return v_flex()
-    .id(`card-${c.id}`)
-    .gap(2)
-    .p(roomy ? 14 : 10)
-    .rounded(6)
-    .bg(t.surface)
-    .border(1)
-    .border_color(t.border)
-    .child(div().text_size(titleSize).font_semibold().text_color(t.foreground).truncate().child(title))
-    .child(div().text_size(placeSize).text_color(t.muted).truncate().child(folder ?? "n/a"))
-    .children(git.map((line) => div().text_size(placeSize).text_color(t.dim).truncate().child(line)))
-    .child(
-      (roomy ? h_flex().flex_wrap() : v_flex().gap(1))
-        .pt(roomy ? 10 : 6)
-        .children(
-          rows.map(([label, value]) =>
-            h_flex()
-              .justify_between()
-              .gap(8)
-              .text_size(rowSize)
-              .when(roomy, (el) => el.w_1_2().px(8).py(2))
-              .child(div().flex_none().text_color(t.dim).child(label))
-              .child(div().truncate().text_color(value === "n/a" ? t.dim : t.foreground).child(value)),
-          ),
+  const heading = [
+    div().text_size(titleSize).font_semibold().text_color(t.foreground).truncate().child(title),
+    div().text_size(placeSize).text_color(t.muted).truncate().child(folder ?? "n/a"),
+  ];
+  const details = [
+    ...git.map((line) => div().text_size(placeSize).text_color(t.dim).truncate().child(line)),
+    (roomy ? h_flex().flex_wrap() : v_flex().gap(1))
+      .pt(roomy ? 10 : 6)
+      .children(
+        rows.map(([label, value]) =>
+          h_flex()
+            .justify_between()
+            .gap(8)
+            .text_size(rowSize)
+            .when(roomy, (el) => el.w_1_2().px(8).py(2))
+            .child(div().flex_none().text_color(t.dim).child(label))
+            .child(div().truncate().text_color(value === "n/a" ? t.dim : t.foreground).child(value)),
         ),
-    );
-}
+      ),
+  ];
+  const shell = v_flex().id(`card-${c.id}`).gap(2).bg(t.surface).border_color(t.border);
+  if (!strip) return shell.p(roomy ? 14 : 10).rounded(6).border(1).children([...heading, ...details]);
 
-// The drawer's card: one compact row. Its key figures (context used, cost) come first, so they
-// are on the edge side and show while the drawer peeks; `mirror` puts that side on the right.
-function compactCard(c, t, mirror) {
-  const { title, place } = describeCard(c);
-  const context = formatPercent(c.stats.contextPercent);
-  const cost = formatCost(c.stats.costUsd);
+  const onRight = strip.side === "right";
   const figure = (text, size, color) => div().text_size(size).text_color(text === "n/a" ? t.dim : color).child(text);
-  return h_flex()
-    .id(`card-${c.id}`)
-    .items_center()
-    .gap(8)
-    .px(6)
-    .py(6)
+  return shell
     .border_b(1)
-    .border_color(t.border)
-    .when(mirror, (el) => el.flex_row_reverse())
     .child(
-      v_flex()
-        .flex_none()
-        .w(52)
-        .items_center()
-        .child(figure(context, 13, t.foreground).font_semibold())
-        .child(figure(cost, 11, t.muted)),
+      h_flex()
+        .items_start()
+        .when(!onRight, (el) => el.flex_row_reverse())
+        .child(v_flex().flex_1().min_w_0().gap(2).p(10).children(heading))
+        .child(
+          v_flex()
+            .flex_none()
+            .w(strip.px)
+            .items_center()
+            .py(10)
+            .child(figure(formatPercent(c.stats.contextPercent), 13, t.foreground).font_semibold())
+            .child(figure(formatCost(c.stats.costUsd), 11, t.muted)),
+        ),
     )
     .child(
-      v_flex()
-        .flex_1()
-        .min_w_0()
-        .child(div().text_size(12).font_semibold().text_color(t.foreground).truncate().child(title))
-        .child(div().text_size(11).text_color(t.muted).truncate().child(place[0] ?? "n/a")),
+      (onRight ? v_flex().gap(2).pl(10).pr(strip.px) : v_flex().gap(2).pr(10).pl(strip.px)).pb(10).children(details),
     );
 }
 
@@ -153,10 +142,10 @@ export default class SessionStats extends View {
     const empty = this.agents === 0 ? "No agents" : "Loading…";
     const note = this.problem ?? (this.cards.length === 0 ? empty : null);
     // The container decides how the cards are listed: a column or a side edge stacks them, a
-    // top or bottom edge puts them side by side, a drawer on a side edge draws each card as a
-    // compact row, mirrored on the right edge, in a fixed width, and the overlay draws the full
-    // card roomy (src/adapt.js).
-    const { direction, compact, mirror, roomy, width } = adapt({ placement: floating, overlay: props()?.overlay });
+    // top or bottom edge puts them side by side, a drawer on a side edge draws the full card in
+    // a fixed width with a strip for the key figures on the edge side (mirrored on the right
+    // edge), and the overlay draws the full card roomy (src/adapt.js).
+    const { direction, roomy, width, strip } = adapt({ placement: floating, overlay: props()?.overlay });
     const vertical = direction === "vertical";
     const list = vertical
       ? v_flex().overflow_y_scrollbar()
@@ -165,14 +154,13 @@ export default class SessionStats extends View {
       .id("session-stats")
       .when(width === undefined, (el) => el.size_full())
       .when(width !== undefined, (el) => el.w(width))
-      .gap(compact ? 0 : 8)
-      .p(compact ? 0 : 8)
+      .gap(strip ? 0 : 8)
+      .p(strip ? 0 : 8)
       .bg(t.chrome)
       .children(
-        this.cards.map((c) => {
-          if (compact) return compactCard(c, t, mirror);
-          return vertical ? card(c, t, roomy) : div().flex_none().w(260).child(card(c, t, false));
-        }),
+        this.cards.map((c) =>
+          vertical ? card(c, t, { roomy, strip: strip ?? null }) : div().flex_none().w(260).child(card(c, t)),
+        ),
       )
       .when(note !== null, (el) => el.child(div().text_size(12).text_color(t.dim).child(note)));
   }

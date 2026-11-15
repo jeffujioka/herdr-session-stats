@@ -38,8 +38,9 @@ The install binds three keys, one for each way to show the same mod (see Install
 - `f8` shows and hides the drawer, a floating block on the right edge that peeks (the key
   runs the mod's own `herdr-session-stats.drawer` command, because `layout.toggle` cannot find
   a floating block). The drawer starts hidden and draws nothing until the key shows it; its
-  cards are compact rows, in a fixed 360 px width whatever the length of a folder path, with
-  the context used and the cost first, which show while it peeks;
+  cards are the full card, in a fixed 360 px width whatever the length of a folder path, with
+  the context used and the cost in a 72 px strip on the right edge (the card's header row),
+  which is what shows while it peeks; the rest of each card shows when the drawer opens;
 - `f9` opens the popup, a larger dialog that draws each card roomy; pressed again it
   closes.
 
