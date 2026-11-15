@@ -6,16 +6,16 @@
 // it. `input` is the jsonl text of the session or `{ text, sources, state }` (see `ompProvider`).
 //
 // The figures are of two kinds. The session totals (tokens, cost, premium requests, duration,
-// cache counts, burn rate, thinking level, autocompactions) need the whole file, and a file can
-// be larger than the tail window the mod reads for the card: `fold(state, entries)` adds
-// entries to an accumulator `state`, so a figure is the same whether the file is folded at
+// cache counts, burn rate, latency, thinking level, autocompactions) need the whole file, and a
+// file can be larger than the tail window the mod reads for the card: `fold(state, entries)`
+// adds entries to an accumulator `state`, so a figure is the same whether the file is folded at
 // once or in pieces (the caller reads a big file in chunks and keeps the state, see
 // src/refresh.js), and each entry of `TOTALS` is a function `(state) => partial stats`. The
 // figures about the end of the file (latest model, cache countdown, context, time since
-// activity, last turn's latency) come from the text, which is the tail: `parseTail` turns it
-// into one `session` value and each entry of `LATEST` is a function `(session, now) =>
-// partial stats` (`now` is epoch ms; only a figure that measures from the present reads it). A
-// later figure is one more function in a list, so adding a figure never rewrites an earlier one.
+// activity) come from the text, which is the tail: `parseTail` turns it into one `session`
+// value and each entry of `LATEST` is a function `(session, now) => partial stats` (`now` is
+// epoch ms; only a figure that measures from the present reads it). A later figure is one more
+// function in a list, so adding a figure never rewrites an earlier one.
 
 import { add, parseEntries, tally } from './jsonl.js';
 import { burnRate, cacheRate, isNumber } from './shared.js';
@@ -36,6 +36,10 @@ function emptyState() {
     cacheReads: 0,
     cacheHits: 0,
     thinkingLevel: undefined,
+    // timestamp (epoch ms) of the latest user message, and the latency of the latest assistant
+    // message: its timestamp minus that of the user message before it, undefined when unknown
+    began: undefined,
+    latencyMs: undefined,
     compactions: 0,
     // the `session` entry is the second line of a file, so a state that holds it starts at
     // the top of the file
@@ -54,7 +58,12 @@ function fold(state, entries) {
       const time = Date.parse(e.timestamp);
       s.firstMessage ??= time;
       s.lastMessage = time;
-      if (e.message.role === 'assistant') {
+      if (e.message.role === 'user') {
+        s.began = time;
+      } else if (e.message.role === 'assistant') {
+        // the turn so far: this reply minus the user message before it (none: unknown)
+        const ms = time - s.began;
+        s.latencyMs = isNumber(ms) ? ms : undefined;
         const { usage } = e.message;
         add(s.totalTokens, usage?.totalTokens);
         add(s.costUsd, usage?.cost?.total);
@@ -215,13 +224,10 @@ function sinceActivity({ messages }, now) {
 }
 
 // Last turn: the last assistant message minus the user message that began its turn (the
-// nearest user message before it), both by their entries' ISO timestamps.
-function latency({ messages }) {
-  const reply = messages.findLastIndex((e) => e.message.role === 'assistant');
-  const began = messages.findLastIndex((e, i) => i < reply && e.message.role === 'user');
-  if (reply < 0 || began < 0) return {};
-  const ms = Date.parse(messages[reply].timestamp) - Date.parse(messages[began].timestamp);
-  return isNumber(ms) ? { latencyMs: ms } : {};
+// nearest user message before it), both by their entries' ISO timestamps. Kept by `fold`, so a
+// turn whose user message lies before the tail window still has its latency.
+function latency({ latencyMs }) {
+  return isNumber(latencyMs) ? { latencyMs } : {};
 }
 
 function thinking({ thinkingLevel }) {
@@ -232,8 +238,8 @@ function premium({ premiumRequests }) {
   return premiumRequests.sum === undefined ? {} : { premiumRequests: premiumRequests.sum };
 }
 
-const TOTALS = [duration, tokens, cost, cacheRate, cacheTurns, burn, thinking, premium];
-const LATEST = [model, cacheExpiry, context, sinceActivity, latency];
+const TOTALS = [duration, tokens, cost, cacheRate, cacheTurns, burn, latency, thinking, premium];
+const LATEST = [model, cacheExpiry, context, sinceActivity];
 
 // `input` is the jsonl text, or `{ text, sources, state }`:
 //   - `text` is the file's text, or its tail window when the file is larger;

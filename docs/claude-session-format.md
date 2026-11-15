@@ -56,7 +56,7 @@ The session files hold nothing for these, so they read n/a (D4), for every Claud
 - `premiumRequests`: Claude Code has no such count.
 - `burnCostPerHour`: see Cost.
 
-As for omp, a file larger than the tail window is folded once in blocks and then by the bytes appended (`fold` in `src/providers/claude.js`, driven by `src/refresh.js`), so totals, duration, cache figures and the token burn are over the whole session (D7, amended). A response written as several blocks (same `message.id`) counts once also when its blocks lie in different blocks of the scan: the accumulator keeps what each id added, to replace it. The latency of the last turn skips a `<synthetic>` reply, as the model and the cache figures do.
+As for omp, a file larger than the tail window is folded once in blocks and then by the bytes appended (`fold` in `src/providers/claude.js`, driven by `src/refresh.js`), so totals, duration, cache figures, the token burn and the latency of the last turn are over the whole session (D7, amended). A response written as several blocks (same `message.id`) counts once also when its blocks lie in different blocks of the scan: the accumulator keeps what each id added, to replace it. The latency of the last turn skips a `<synthetic>` reply, as the model and the cache figures do, and the accumulator keeps the timestamp of the latest prompt, so a prompt before the tail window still gives it.
 
 ## Fixtures
 

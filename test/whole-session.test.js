@@ -269,4 +269,37 @@ describe('whole-session figures on a large file', () => {
       expect(stats(odd)).toEqual(stats(atOnce));
     }
   });
+
+  test('latency and thinking survive a large file', async () => {
+    // the last turn's user message and the thinking-level entry lie far before the tail window:
+    // entries that are no message fill the space between them and the last reply
+    const pad = Array.from({ length: Math.ceil((TAIL_BYTES * 2) / 2000) }, () => line({ type: 'custom', note: filler }));
+    const outside = (text, needle) => expect(text.slice(-TAIL_BYTES)).not.toContain(needle);
+
+    const omp = `${[
+      line({ type: 'session', id: 's', timestamp: stamp(0) }),
+      line({ type: 'thinking_level_change', thinkingLevel: 'high' }),
+      ompUser(0),
+      ompTurn(1, EARLY[0]),
+      ompUser(2),
+      ...pad,
+      ompTurn(5, LATE[0], 'tail-model'),
+    ].join('\n')}\n`;
+    expect(Buffer.byteLength(omp)).toBeGreaterThan(TAIL_BYTES * 2);
+    outside(omp, '"id":"u2"');
+    outside(omp, 'thinking_level_change');
+    const stats = await ompReader(fakeExec(new Map([[OMP_PATH, omp]])).exec)(ompFile(omp));
+    // the reply at minute 5 minus the user message of minute 2
+    expect(stats.latencyMs).toBe(3 * 60_000);
+    expect(stats.thinkingLevel).toBe('high');
+    expect(stats.model).toBe('tail-model');
+
+    // Claude Code: the same latency (it logs no thinking level)
+    const claude = `${[claudeUser(0), claudeBlock(1, 'r1', [10, 20, 0, 100]), claudeUser(2), ...pad, claudeBlock(5, 'r2', [1, 2, 300, 0], 'tail-model')].join('\n')}\n`;
+    expect(Buffer.byteLength(claude)).toBeGreaterThan(TAIL_BYTES * 2);
+    outside(claude, '"type":"user"');
+    const claudeStats = await claudeReader(fakeExec(new Map([[CLAUDE_PATH, claude]])).exec)(claudeFile(claude));
+    expect(claudeStats.latencyMs).toBe(3 * 60_000);
+    expect(claudeStats.model).toBe('tail-model');
+  });
 });
