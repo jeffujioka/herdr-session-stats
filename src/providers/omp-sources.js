@@ -131,15 +131,17 @@ const sessionDir = (cwd, home) => `${home}/.omp/agent/sessions/${sessionDirSlug(
 
 // The title of a session, from the first line of its file: omp writes the `title` entry there
 // and rewrites it in place when the title changes (it always equals the latest `title_change`
-// entry), so one short read gives it. '' when the file has none, or is not readable: the
-// session then matches no pane title and takes an untitled pane (shareSessions).
+// entry), so one short read gives it. '' when the line is not a title entry (the session then
+// matches no pane title and takes an untitled pane, see shareSessions); null when the line
+// could not be read (a file being written, a failed program), which is not worth keeping.
 async function readTitle(run, path) {
   try {
     const { code, stdout } = await run('head', ['-n', '1', '--', path]);
     const entry = code === 0 ? parseEntries(stdout)[0] : null;
-    return entry?.type === 'title' && typeof entry.title === 'string' ? entry.title : '';
+    if (!entry) return null;
+    return entry.type === 'title' && typeof entry.title === 'string' ? entry.title : '';
   } catch {
-    return '';
+    return null;
   }
 }
 
@@ -149,6 +151,19 @@ async function readTitle(run, path) {
 export function createOmpSessions({ execOn, readTextOn }) {
   // machine -> the reader that keeps that machine's per-file totals
   const readerOn = sessionReaders(execOn, ompProvider.fold);
+
+  // machine and path -> { mtimeMs, title }: a title is read again only when the file changed,
+  // so a refresh of quiet files runs no program. One entry per file, replaced when it changes.
+  const titles = new Map();
+  async function titleOf(machine, file) {
+    const key = `${machine ?? ''}\0${file.path}`;
+    const hit = titles.get(key);
+    if (hit?.mtimeMs === file.mtimeMs) return hit.title;
+    const title = await readTitle(execOn(machine), file.path);
+    if (title === null) return '';
+    titles.set(key, { mtimeMs: file.mtimeMs, title });
+    return title;
+  }
 
   // key -> { at, value: Promise }: a value reused for `ttl` ms, also by panes asking at once
   const cache = new Map();
@@ -196,9 +211,8 @@ export function createOmpSessions({ execOn, readTextOn }) {
 
     // The `limit` newest session files of the folder, each with its title.
     async list({ machine, cwd, home, os, limit }) {
-      const run = execOn(machine);
-      const files = await listSessionFiles(run, { dir: sessionDir(cwd, home), os, limit });
-      return Promise.all(files.map(async (file) => ({ ...file, title: await readTitle(run, file.path) })));
+      const files = await listSessionFiles(execOn(machine), { dir: sessionDir(cwd, home), os, limit });
+      return Promise.all(files.map(async (file) => ({ ...file, title: await titleOf(machine, file) })));
     },
 
     // The `input` of `readStats('omp', input, now)` for a linked file.
