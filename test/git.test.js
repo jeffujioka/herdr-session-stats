@@ -73,4 +73,22 @@ describe('git', () => {
     expect(await readGit({ exec }, { cwd: '/work/app', on: 'down' })).toEqual({ branch: null, origin: null });
     expect(await readGit({ exec }, { cwd: null })).toEqual({ branch: null, origin: null });
   });
+
+  test('credentials in the remote are masked', async () => {
+    const originOf = async (origin) => {
+      const { exec } = fakeExec({ null: { '/work/app': { branch: 'main', origin } } });
+      return (await readGit({ exec }, { cwd: '/work/app' })).origin;
+    };
+    // user and token, a token alone, and a password with an @ in it: the whole userinfo goes
+    expect(await originOf('https://user:token@host.example/org/repo.git')).toBe('https://***@host.example/org/repo.git');
+    expect(await originOf('https://ghp_secret@host.example/org/repo.git')).toBe('https://***@host.example/org/repo.git');
+    expect(await originOf('http://user:p@ss@host.example:8080/org/repo.git')).toBe('http://***@host.example:8080/org/repo.git');
+    expect(await originOf('ftps://user:token@host.example/repo.git')).toBe('ftps://***@host.example/repo.git');
+    // a bare user name is not a secret, and a remote without credentials is shown as it is
+    expect(await originOf('git@github.com:org/repo.git')).toBe('git@github.com:org/repo.git');
+    expect(await originOf('ssh://git@host.example/org/repo.git')).toBe('ssh://git@host.example/org/repo.git');
+    expect(await originOf('https://host.example/org/repo.git')).toBe('https://host.example/org/repo.git');
+    // an @ after the host is part of the path, not credentials
+    expect(await originOf('https://host.example/org/user@repo.git')).toBe('https://host.example/org/user@repo.git');
+  });
 });
