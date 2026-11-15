@@ -40,7 +40,7 @@ describe('claude sessions', () => {
     expect(sessionDirSlug(`${HOME}/work/app.v1_2`)).toBe('-Users-me-work-app-v1-2');
   });
 
-  test('a Claude Code pane links to its newest recent session and reads its tail', async () => {
+  test('a Claude Code pane links to its newest session and reads its tail', async () => {
     const recent = { name: 'bbbb.jsonl', mtimeMs: NOW - 30_000, size: BASIC.length, text: BASIC };
     const older = { name: 'aaaa.jsonl', mtimeMs: NOW - 3_600_000, size: 10, text: 'not the session' };
     const { exec, calls } = fakeExec([older, recent]);

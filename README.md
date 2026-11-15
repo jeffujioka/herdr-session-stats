@@ -52,7 +52,9 @@ The mod ties a pane to a session by the pane's folder: it takes the newest-modif
 file of that folder for the pane's harness, however long ago it changed. A pane with an agent
 has that agent running, so its session is the newest one, and an idle session shows its figures
 and its idle time (the Activity row). A folder with no session file is not linked, and every
-session figure on its card reads `n/a`. The mod never estimates a figure.
+session figure on its card reads `n/a`. Between an agent's start and its first written message
+the card shows the figures and idle time of the folder's previous conversation, since that is
+still the newest session. The mod never estimates a figure.
 
 **Known ambiguity: two agents in one folder.** Session files are found by folder, so two
 agents of the same harness running in the same folder cannot be told apart. Both panes resolve
