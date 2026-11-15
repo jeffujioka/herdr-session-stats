@@ -167,7 +167,7 @@ describe('install into herdr', () => {
       ...KEYS,
       'layout:main': { ...KEYS['layout:main'], 'cmd-shift-g': 'review-toggle.gitlab' },
       'layout:main-stats': { 'cmd-shift-r': 'mine.own' },
-      global: { ...KEYS.global, 'ctrl-shift-s': 'tab.new' },
+      global: { ...KEYS.global, f7: 'tab.new' },
     };
     put(join(home, 'keys.json'), `${JSON.stringify(taken, null, 2)}\n`);
 
@@ -176,10 +176,10 @@ describe('install into herdr', () => {
     const keys = readJson(join(home, 'keys.json'));
     // every existing binding is kept as it was
     for (const [section, bindings] of Object.entries(taken)) expect(keys[section]).toMatchObject(bindings);
-    expect(keys.global['ctrl-shift-s']).toBe('tab.new');
+    expect(keys.global.f7).toBe('tab.new');
     // the key that was taken is reported, not overwritten, and not bound twice
     expect(report.keys.conflicts).toEqual([
-      expect.objectContaining({ presentation: 'dock', key: 'ctrl-shift-s', section: 'global', taken: 'tab.new' }),
+      expect.objectContaining({ presentation: 'dock', key: 'f7', section: 'global', taken: 'tab.new' }),
     ]);
     expect(report.keys.added.map((b) => b.presentation)).toEqual(['drawer', 'overlay']);
     expect(JSON.stringify(keys)).not.toContain('session-stats-dock');
@@ -189,18 +189,18 @@ describe('install into herdr', () => {
     expect(keys['layout:main-stats']).toEqual({
       'cmd-shift-r': 'mine.own',
       'cmd-shift-g': 'review-toggle.gitlab',
-      'ctrl-shift-d': 'layout.toggle:session-stats-drawer',
+      f8: 'layout.toggle:session-stats-drawer',
     });
     expect(report.keys.copied).toEqual([{ key: 'cmd-shift-g', action: 'review-toggle.gitlab' }]);
   });
 
   test('a key taken in the layout section or the terminal section is a conflict too', () => {
-    const layoutTaken = { ...KEYS, 'layout:main-stats': { 'ctrl-shift-s': 'tab.new' } };
+    const layoutTaken = { ...KEYS, 'layout:main-stats': { f7: 'tab.new' } };
     put(join(home, 'keys.json'), `${JSON.stringify(layoutTaken, null, 2)}\n`);
     expect(run().keys.conflicts.map((c) => c.section)).toEqual(['layout:main-stats']);
 
     // the terminal section wins over the layout's, so the key would never reach the dock
-    put(join(home, 'keys.json'), `${JSON.stringify({ ...KEYS, terminal: { ...KEYS.terminal, 'ctrl-shift-s': 'send:x' } }, null, 2)}\n`);
+    put(join(home, 'keys.json'), `${JSON.stringify({ ...KEYS, terminal: { ...KEYS.terminal, f7: 'send:x' } }, null, 2)}\n`);
     const report = run();
     expect(report.keys.conflicts.map((c) => [c.section, c.taken])).toEqual([['terminal', 'send:x']]);
   });
@@ -263,14 +263,14 @@ describe('three presentations of the one mod', () => {
     const clone = readJson(join(home, 'layouts', 'main-stats.json'));
     // the key runs layout.toggle on the id of the block the clone holds, and only in that layout
     // (the developer's own keys for the layout are copied beside it)
-    const action = keys['layout:main-stats']['ctrl-shift-s'];
-    const key = 'ctrl-shift-s';
+    const action = keys['layout:main-stats'].f7;
+    const key = 'f7';
     const [command, id] = action.split(':');
     expect(command).toBe('layout.toggle');
     expect(ids(clone).filter((x) => x === id)).toHaveLength(1);
     expect(find(clone, id).type).toBe('block');
     expect(find(clone, id).content).toEqual({ mod: MOD_NAME });
-    expect(keys.global['ctrl-shift-s']).toBeUndefined();
+    expect(keys.global.f7).toBeUndefined();
     expect(report.keys.added).toContainEqual(expect.objectContaining({ presentation: 'dock', key, section: 'layout:main-stats', action }));
     expect(report.keys.conflicts).toEqual([]);
   });
@@ -301,7 +301,7 @@ describe('three presentations of the one mod', () => {
     const clone = readJson(join(home, 'layouts', 'main-stats.json'));
     const [drawer] = clone.floating;
     // the drawer's key runs layout.toggle on the drawer's block id, in the clone's section only
-    const key = 'ctrl-shift-d';
+    const key = 'f8';
     expect(keys['layout:main-stats'][key]).toBe(`layout.toggle:${drawer.id}`);
     expect(keys.global[key]).toBeUndefined();
     expect(report.keys.added).toContainEqual(
@@ -311,13 +311,13 @@ describe('three presentations of the one mod', () => {
   });
 
   test('a drawer key that is taken is reported, the dock key still goes in', () => {
-    put(join(home, 'keys.json'), `${JSON.stringify({ ...KEYS, global: { ...KEYS.global, 'ctrl-shift-d': 'tab.new' } }, null, 2)}\n`);
+    put(join(home, 'keys.json'), `${JSON.stringify({ ...KEYS, global: { ...KEYS.global, f8: 'tab.new' } }, null, 2)}\n`);
 
     const report = run();
 
-    expect(report.keys.conflicts).toEqual([expect.objectContaining({ presentation: 'drawer', key: 'ctrl-shift-d', section: 'global', taken: 'tab.new' })]);
+    expect(report.keys.conflicts).toEqual([expect.objectContaining({ presentation: 'drawer', key: 'f8', section: 'global', taken: 'tab.new' })]);
     expect(report.keys.added.map((b) => b.presentation)).toEqual(['dock', 'overlay']);
-    expect(readJson(join(home, 'keys.json')).global['ctrl-shift-d']).toBe('tab.new');
+    expect(readJson(join(home, 'keys.json')).global.f8).toBe('tab.new');
   });
 
   test('overlay key is mod.open', () => {
@@ -325,7 +325,7 @@ describe('three presentations of the one mod', () => {
 
     const keys = readJson(join(home, 'keys.json'));
     const clone = readJson(join(home, 'layouts', 'main-stats.json'));
-    const key = 'ctrl-shift-a';
+    const key = 'f9';
     // the overlay's key is `mod.open` for the mod: pressed once it opens, pressed again herdr
     // closes it. It is in `global`, so it works in any layout, with or without the clone
     expect(keys.global[key]).toBe(`mod.open:${MOD_NAME}`);
@@ -343,17 +343,17 @@ describe('three presentations of the one mod', () => {
   });
 
   test('an overlay key that is taken, in global or in a layout section, is reported', () => {
-    put(join(home, 'keys.json'), `${JSON.stringify({ ...KEYS, global: { ...KEYS.global, 'ctrl-shift-a': 'tab.new' } }, null, 2)}\n`);
+    put(join(home, 'keys.json'), `${JSON.stringify({ ...KEYS, global: { ...KEYS.global, f9: 'tab.new' } }, null, 2)}\n`);
     let report = run();
-    expect(report.keys.conflicts).toEqual([expect.objectContaining({ presentation: 'overlay', key: 'ctrl-shift-a', section: 'global', taken: 'tab.new' })]);
+    expect(report.keys.conflicts).toEqual([expect.objectContaining({ presentation: 'overlay', key: 'f9', section: 'global', taken: 'tab.new' })]);
     expect(report.keys.added.map((b) => b.presentation)).toEqual(['dock', 'drawer']);
 
     // a layout section wins over `global` in its layout, so a key it holds would hide the overlay there
     rmSync(join(home, 'layouts', 'main-stats.json'));
-    put(join(home, 'keys.json'), `${JSON.stringify({ ...KEYS, 'layout:main': { ...KEYS['layout:main'], 'ctrl-shift-a': 'mine.own' } }, null, 2)}\n`);
+    put(join(home, 'keys.json'), `${JSON.stringify({ ...KEYS, 'layout:main': { ...KEYS['layout:main'], f9: 'mine.own' } }, null, 2)}\n`);
     report = run();
     expect(report.keys.conflicts.map((c) => [c.presentation, c.section, c.taken])).toEqual([['overlay', 'layout:main', 'mine.own']]);
-    expect(readJson(join(home, 'keys.json')).global['ctrl-shift-a']).toBeUndefined();
+    expect(readJson(join(home, 'keys.json')).global.f9).toBeUndefined();
   });
 });
 
@@ -362,13 +362,13 @@ describe('the three keys', () => {
     const report = run();
 
     const keys = readJson(join(home, 'keys.json'));
-    expect(keys['layout:main-stats']['ctrl-shift-s']).toBe('layout.toggle:session-stats-dock');
-    expect(keys['layout:main-stats']['ctrl-shift-d']).toBe('layout.toggle:session-stats-drawer');
-    expect(keys.global['ctrl-shift-a']).toBe(`mod.open:${MOD_NAME}`);
+    expect(keys['layout:main-stats'].f7).toBe('layout.toggle:session-stats-dock');
+    expect(keys['layout:main-stats'].f8).toBe('layout.toggle:session-stats-drawer');
+    expect(keys.global.f9).toBe(`mod.open:${MOD_NAME}`);
     expect(report.keys.added.map((b) => [b.presentation, b.key])).toEqual([
-      ['dock', 'ctrl-shift-s'],
-      ['drawer', 'ctrl-shift-d'],
-      ['overlay', 'ctrl-shift-a'],
+      ['dock', 'f7'],
+      ['drawer', 'f8'],
+      ['overlay', 'f9'],
     ]);
     expect(report.keys.conflicts).toEqual([]);
     // the developer's own bindings are kept
