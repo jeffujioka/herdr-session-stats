@@ -5,7 +5,8 @@ A herdr mod that shows CWD, git info and AI harness session stats per agent pane
 ## What a card shows
 
 One card per agent pane of the shown space (a terminal in which herdr detected omp, Claude Code
-or opencode, in any tab of that space; panes of other spaces get none), in pane order,
+or opencode and reports an agent status, so a terminal whose agent has exited gets none, in any
+tab of that space; panes of other spaces get none), in pane order,
 refreshed every 2 seconds from read-only reads of the harness's own session files
 (opencode: its database). A card has the harness name, the pane's folder, its git branch and
 origin, and these rows:
