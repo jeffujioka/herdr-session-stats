@@ -4,11 +4,17 @@
 
 import { View, div } from "gpui-kit";
 import { v_flex, h_flex } from "gpui-base";
-import { exec, home, panes, placement, props, readTextFile, spaces, theme } from "herdr";
+import { exec, home, nextCommand, panes, placement, props, readTextFile, setShared, shared, spaces, theme } from "herdr";
 import { adapt } from "./adapt.js";
 import { agentPanes, createCardBuilder, panesOfActiveSpace } from "./cards.js";
 import { describeCard, formatCost, formatPercent } from "./format.js";
 import { REFRESH_INTERVAL_MS } from "./refresh.js";
+
+// The drawer's key is bound to the mod's own command `drawer` (`layout.toggle` cannot find a
+// floating block); the drawer copy keeps whether it is shown in this shared flag, false (hidden)
+// until the first command.
+const DRAWER_COMMAND = "drawer";
+const DRAWER_SHOWN = "session-stats.drawer";
 
 // The panes of the shown space as `panes()` reports them, each with the machine of its space:
 // the pane's tab names the space it is in, and the space the machine.
@@ -94,6 +100,20 @@ export default class SessionStats extends View {
     this.builder = createCardBuilder({ exec, readTextFile, home: home() });
     cx.timer.every(REFRESH_INTERVAL_MS, (cx) => this.refresh(cx));
     this.refresh(cx);
+    this.listen(cx);
+  }
+
+  // The key commands of this mod. The drawer's key (`herdr-session-stats.drawer`) is delivered
+  // to every shown copy; only the copy that floats, the drawer, reacts, so the flag flips once
+  // however many copies hear it. The flag is shared, so setting it redraws the drawer.
+  listen(cx) {
+    cx.spawn(async (cx) => {
+      for (;;) {
+        const command = await nextCommand();
+        if (command === DRAWER_COMMAND && placement() !== null) setShared(DRAWER_SHOWN, shared(DRAWER_SHOWN) !== true);
+        cx.notify();
+      }
+    });
   }
 
   // Every tick starts a refresh. A card shows as soon as its own pane is resolved, so a slow
@@ -127,22 +147,28 @@ export default class SessionStats extends View {
 
   render() {
     const t = theme();
+    const floating = placement();
+    // The drawer is the copy that floats. It starts hidden and draws nothing until its key's
+    // command shows it (AGENTS.md: a floating block sizes to its content, so render nothing to
+    // hide it).
+    if (floating !== null && shared(DRAWER_SHOWN) !== true) return div();
     // No card yet is "No agents" only when herdr reports no agent pane; with agent panes it is
     // loading, however long a slow machine takes.
     const empty = this.agents === 0 ? "No agents" : "Loading…";
     const note = this.problem ?? (this.cards.length === 0 ? empty : null);
     // The container decides how the cards are listed: a column or a side edge stacks them, a
     // top or bottom edge puts them side by side, a drawer on a side edge draws each card as a
-    // compact row, mirrored on the right edge, and the overlay draws the full card roomy
-    // (src/adapt.js).
-    const { direction, compact, mirror, roomy } = adapt({ placement: placement(), overlay: props()?.overlay });
+    // compact row, mirrored on the right edge, in a fixed width, and the overlay draws the full
+    // card roomy (src/adapt.js).
+    const { direction, compact, mirror, roomy, width } = adapt({ placement: floating, overlay: props()?.overlay });
     const vertical = direction === "vertical";
     const list = vertical
       ? v_flex().overflow_y_scrollbar()
       : h_flex().items_start().overflow_x_scrollbar();
     return list
       .id("session-stats")
-      .size_full()
+      .when(width === undefined, (el) => el.size_full())
+      .when(width !== undefined, (el) => el.w(width))
       .gap(compact ? 0 : 8)
       .p(compact ? 0 : 8)
       .bg(t.chrome)

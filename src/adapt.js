@@ -16,9 +16,16 @@
 // mod.json sizes larger than the default). The overlay is neither docked nor a drawer: the cards
 // stack as full cards, and `roomy` (set only then) tells the mod to use the extra room.
 //
-// Returns `{ direction: 'vertical' | 'horizontal', compact, mirror }`, and `roomy: true` in an
-// overlay: the way the cards are listed, whether each is a compact row, whether the row is
-// mirrored, and whether the full card spreads over the room of an overlay.
+// The drawer's content has a fixed width, `DRAWER_WIDTH_PX`: a floating block sizes to its
+// content, so a row as wide as its longest folder path would make the expanded drawer cover the
+// window. The rows truncate their text to it.
+//
+// Returns `{ direction: 'vertical' | 'horizontal', compact, mirror }`, `width` (px, set only for
+// the drawer) and `roomy: true` in an overlay: the way the cards are listed, whether each is a
+// compact row, whether the row is mirrored, the drawer's fixed width, and whether the full card
+// spreads over the room of an overlay.
+export const DRAWER_WIDTH_PX = 360;
+
 export function adapt({ placement = null, overlay = null } = {}) {
   if (overlay) return { direction: 'vertical', compact: false, mirror: false, roomy: true };
   const compact = Boolean(placement?.vertical);
@@ -26,5 +33,6 @@ export function adapt({ placement = null, overlay = null } = {}) {
     direction: placement && !placement.vertical ? 'horizontal' : 'vertical',
     compact,
     mirror: compact && placement.edge === 'right',
+    ...(compact ? { width: DRAWER_WIDTH_PX } : {}),
   };
 }

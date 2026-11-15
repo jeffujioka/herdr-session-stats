@@ -35,8 +35,11 @@ that does not log a figure reads `n/a` for it.
 The install binds three keys, one for each way to show the same mod (see Install):
 
 - `f7` toggles the docked block, a column on the right with the full cards;
-- `f8` toggles the drawer, a floating block on the right edge that peeks; its cards
-  are compact rows with the context used and the cost first, which show while it peeks;
+- `f8` shows and hides the drawer, a floating block on the right edge that peeks (the key
+  runs the mod's own `herdr-session-stats.drawer` command, because `layout.toggle` cannot find
+  a floating block). The drawer starts hidden and draws nothing until the key shows it; its
+  cards are compact rows, in a fixed 360 px width whatever the length of a folder path, with
+  the context used and the cost first, which show while it peeks;
 - `f9` opens the popup, a larger dialog that draws each card roomy; pressed again it
   closes.
 
@@ -71,13 +74,16 @@ agents apart, run them in different folders.
   the drawer as a floating block on the right edge that peeks. Its root must be a row, as in
   herdr's own layouts; any other root is refused before anything is written. Show it with
   `herdr-app do layout.switch --name <active>-stats`;
-- three keys are added to `keys.json`: `f7` toggles the docked block and
-  `f8` the drawer (`layout.toggle`, in the clone's `layout:` section), and
+- three keys are added to `keys.json`: `f7` toggles the docked block (`layout.toggle`) and
+  `f8` the drawer (the mod's own `herdr-session-stats.drawer` command), both in the clone's
+  `layout:` section, and
   `f9` opens the popup (`mod.open`, in `global`, so it works in any layout; pressed
   again it closes). The popup is a larger dialog (`overlay` in `mod.json`) that draws each
   card roomy. Your bindings are kept; a key that is already taken (in its own section, in
   `global` or in `terminal`, and for the popup also in any `layout:` section, which would hide
-  it there; by that exact spelling) is reported by the install and left unbound;
+  it there; by that exact spelling) is reported by the install and left unbound. The one
+  binding it replaces is this mod's own earlier `f8` (`layout.toggle:session-stats-drawer`),
+  which it upgrades to the drawer command;
 - the keys you have in the `layout:<active>` section are copied into `layout:<active>-stats`,
   because a section applies only while its layout shows. A key the clone's section already
   has stays as it is; nothing is replaced.
