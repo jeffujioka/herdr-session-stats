@@ -45,7 +45,7 @@ A tool result is a `user` entry too, so a prompt is told from it by its content,
 
 **Cost.** Claude Code logs no cost on a response. It does write a `cost-state` entry (39 of the 44 files have one, at the end of the file, 1 to 3 times): `totalCostUSD`, plus `totalDuration`, `startTime`, `totalLinesAdded` and `modelUsage` with tokens and `costUSD` by model. That total is the session's cost as Claude Code itself counted it, sub-agents and side calls included (the big file: 39.33 USD; its `totalDuration` of 57,677,524 ms agrees with the 57,664,215 ms the provider reads as the duration). It is written when a session is saved, not per turn, so a live session has none, or the one from before it was resumed. A response after the last `cost-state` is not in it, so then the figure is n/a instead of a stale lower one (D4, D5; no price table). There is no cost per hour: it would divide a total logged at save time by a duration read here.
 
-**Autocompactions.** A compaction writes a `system` entry `compact_boundary` with `compactMetadata` (`trigger`, `preTokens`, `postTokens`, ...). The one in the files here has `trigger: "manual"`; no automatic one is in any local file, so `trigger: "auto"` as the name of the automatic kind is [INFERENCE]; if Claude Code names it otherwise the count reads 0, and the fixtures of the tests are written by hand from the shape above. The count needs the whole file: for a file larger than the tail window the count is n/a, never 0 (D4). Unlike omp's, it is not kept incrementally from the bytes appended, because that reader counts omp's entry and is not shared.
+**Autocompactions.** A compaction writes a `system` entry `compact_boundary` with `compactMetadata` (`trigger`, `preTokens`, `postTokens`, ...). The one in the files here has `trigger: "manual"`; no automatic one is in any local file, so `trigger: "auto"` as the name of the automatic kind is [INFERENCE], and so is that no other trigger is automatic. A `compact_boundary` whose trigger is neither `manual` nor `auto` (or has none) might be an automatic one under a name this reader does not know, so the count reads n/a then instead of a number that may be too low (D4). The count needs the whole file: it is read from the accumulator over the whole file, as for omp (below), and the fixtures of the tests are written by hand from the shape above.
 
 ## n/a by design
 
@@ -56,7 +56,7 @@ The session files hold nothing for these, so they read n/a (D4), for every Claud
 - `premiumRequests`: Claude Code has no such count.
 - `burnCostPerHour`: see Cost.
 
-As for omp, a file larger than the tail window gives totals, duration, cache figures and the token burn over the tail only (D7).
+As for omp, a file larger than the tail window is folded once in blocks and then by the bytes appended (`fold` in `src/providers/claude.js`, driven by `src/refresh.js`), so totals, duration, cache figures and the token burn are over the whole session (D7, amended). A response written as several blocks (same `message.id`) counts once also when its blocks lie in different blocks of the scan: the accumulator keeps what each id added, to replace it. The latency of the last turn skips a `<synthetic>` reply, as the model and the cache figures do.
 
 ## Fixtures
 

@@ -2,7 +2,8 @@ import { describe, expect, test } from 'bun:test';
 import { readFileSync } from 'node:fs';
 import { agentPanes, createCardBuilder } from '../src/cards.js';
 import { describeCard, formatDuration } from '../src/format.js';
-import { parseCompactionConfig, parseSessionFiles, sessionDirSlug } from '../src/providers/omp-sources.js';
+import { parseCompactionConfig, sessionDirSlug } from '../src/providers/omp-sources.js';
+import { parseSessionFiles } from '../src/providers/session-files.js';
 import { NA, readStats } from '../src/providers/index.js';
 
 const FIXTURE = readFileSync(new URL('./fixtures/omp/basic.jsonl', import.meta.url), 'utf8');

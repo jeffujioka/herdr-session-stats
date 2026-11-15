@@ -2,6 +2,8 @@ import { describe, expect, test } from 'bun:test';
 import { readFileSync } from 'node:fs';
 import { formatContext, formatTokens } from '../src/format.js';
 import { NA, readStats } from '../src/providers/index.js';
+import { parseEntries } from '../src/providers/jsonl.js';
+import { ompProvider } from '../src/providers/omp.js';
 
 const NOW = Date.parse('2026-11-02T12:00:00.000Z');
 const fixture = (name) => readFileSync(new URL(`./fixtures/omp/${name}`, import.meta.url), 'utf8');
@@ -91,13 +93,14 @@ describe('omp session: context window and autocompactions', () => {
     expect(provider({ models: window200k }).readStats(fixture('basic.jsonl'), NOW).autocompactions).toBe(0);
   });
 
-  test('a compaction count handed in stands for a tail window', () => {
-    // the mod counts the whole file by a cheap read; the provider takes that number as is
-    const tail = fixture('compacted.jsonl').split('\n').slice(8).join('\n');
-    const stats = readStats('omp', { text: tail, sources: { compactionCount: 3 } }, NOW);
+  test('a state over the whole file stands for a tail window', () => {
+    // the mod folds the whole file in chunks (src/refresh.js); the provider takes that state as is
+    const whole = fixture('compacted.jsonl');
+    const tail = whole.split('\n').slice(8).join('\n');
+    const state = ompProvider.fold(undefined, parseEntries(whole));
 
-    expect(stats.autocompactions).toBe(3);
-    expect(readStats('omp', { text: tail, sources: { compactionCount: null } }, NOW).autocompactions).toBe(NA);
+    expect(readStats('omp', { text: tail, state }, NOW).autocompactions).toBe(2);
+    expect(readStats('omp', { text: tail, state: null }, NOW).autocompactions).toBe(NA);
   });
 
   test('unknown compactions is n/a', () => {

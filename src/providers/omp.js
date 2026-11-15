@@ -3,49 +3,84 @@
 // left out, which the registry turns into 'n/a'; nothing here estimates one.
 //
 // Pure: no herdr, no file or database access, no runtime-specific API, so the mod can bundle
-// it. `input` is the jsonl text of the session or `{ text, sources }` (see `ompProvider`).
+// it. `input` is the jsonl text of the session or `{ text, sources, state }` (see `ompProvider`).
 //
-// Structure: `parseSession` turns the text into one `session` value; each entry of `FIGURES`
-// is a function `(session, now) => partial stats` (`now` is epoch ms; only a figure that
-// measures from the present reads it). A later figure is one more function in the list, so
-// adding a figure never rewrites an earlier one.
+// The figures are of two kinds. The session totals (tokens, cost, premium requests, duration,
+// cache counts, burn rate, thinking level, autocompactions) need the whole file, and a file can
+// be larger than the tail window the mod reads for the card: `fold(state, entries)` adds
+// entries to an accumulator `state`, so a figure is the same whether the file is folded at
+// once or in pieces (the caller reads a big file in chunks and keeps the state, see
+// src/refresh.js), and each entry of `TOTALS` is a function `(state) => partial stats`. The
+// figures about the end of the file (latest model, cache countdown, context, time since
+// activity, last turn's latency) come from the text, which is the tail: `parseTail` turns it
+// into one `session` value and each entry of `LATEST` is a function `(session, now) =>
+// partial stats` (`now` is epoch ms; only a figure that measures from the present reads it). A
+// later figure is one more function in a list, so adding a figure never rewrites an earlier one.
 
-// Lines that are not whole JSON (a tail window can start mid-line) are skipped.
-function parseEntries(text) {
-  const entries = [];
-  for (const line of text.split('\n')) {
-    if (!line.trim()) continue;
-    try {
-      const entry = JSON.parse(line);
-      if (entry && typeof entry === 'object') entries.push(entry);
-    } catch {
-      // partial or damaged line: carries no figure
+import { add, isNumber, parseEntries, tally } from './jsonl.js';
+
+// A fresh accumulator. Sums are `tally`s: undefined until an entry carries the value.
+function emptyState() {
+  return {
+    // timestamps (epoch ms, NaN when unreadable) of the first and the latest message entry
+    firstMessage: undefined,
+    lastMessage: undefined,
+    totalTokens: tally(),
+    costUsd: tally(),
+    premiumRequests: tally(),
+    input: tally(),
+    cacheRead: tally(),
+    cacheWrite: tally(),
+    // assistant messages that logged a cacheRead, and those whose cacheRead was above 0
+    cacheReads: 0,
+    cacheHits: 0,
+    thinkingLevel: undefined,
+    compactions: 0,
+    // the `session` entry is the second line of a file, so a state that holds it starts at
+    // the top of the file
+    fromStart: false,
+  };
+}
+
+// Adds `entries` (in file order, after those already in `state`) to `state`, which it changes
+// and returns; without a `state` it starts a new one. Entries that carry no figure are skipped.
+function fold(state, entries) {
+  const s = state ?? emptyState();
+  for (const e of entries) {
+    if (e.type === 'session') {
+      s.fromStart = true;
+    } else if (e.type === 'message' && e.message) {
+      const time = Date.parse(e.timestamp);
+      s.firstMessage ??= time;
+      s.lastMessage = time;
+      if (e.message.role === 'assistant') {
+        const { usage } = e.message;
+        add(s.totalTokens, usage?.totalTokens);
+        add(s.costUsd, usage?.cost?.total);
+        add(s.premiumRequests, usage?.premiumRequests);
+        add(s.input, usage?.input);
+        add(s.cacheRead, usage?.cacheRead);
+        add(s.cacheWrite, usage?.cacheWrite);
+        if (isNumber(usage?.cacheRead)) {
+          s.cacheReads += 1;
+          if (usage.cacheRead > 0) s.cacheHits += 1;
+        }
+      }
+    } else if (e.type === 'compaction') {
+      s.compactions += 1;
+    } else if (e.type === 'thinking_level_change' && typeof e.thinkingLevel === 'string') {
+      // the latest change stands
+      s.thinkingLevel = e.thinkingLevel;
     }
   }
-  return entries;
+  return s;
 }
 
-function parseSession(text) {
-  const entries = parseEntries(text);
+// The messages and the assistant messages of a text, for the figures about the end of the file.
+function parseTail(entries) {
   const messages = entries.filter((e) => e.type === 'message' && e.message);
   const assistants = messages.filter((e) => e.message.role === 'assistant').map((e) => e.message);
-  // The `session` entry is the second line of a file, so a text that holds it starts at the
-  // top of the file; a tail window does not.
-  const fromStart = entries.some((e) => e.type === 'session');
-  const compactions = entries.filter((e) => e.type === 'compaction').length;
-  // Level of the latest `thinking_level_change` entry; a tail window may not hold one.
-  const thinkingLevel = entries
-    .filter((e) => e.type === 'thinking_level_change' && typeof e.thinkingLevel === 'string')
-    .at(-1)?.thinkingLevel;
-  return { messages, assistants, fromStart, compactions, thinkingLevel };
-}
-
-const isNumber = (value) => typeof value === 'number' && Number.isFinite(value);
-
-// Sum of `pick(assistant message)` over the messages that have it; undefined when none has.
-function sumAssistants(session, pick) {
-  const values = session.assistants.map(pick).filter(isNumber);
-  return values.length ? values.reduce((a, b) => a + b, 0) : undefined;
+  return { messages, assistants };
 }
 
 function model({ assistants }) {
@@ -54,41 +89,31 @@ function model({ assistants }) {
 }
 
 // First to last message, by the entries' own ISO timestamps (present on every message entry).
-function duration({ messages }) {
-  const first = Date.parse(messages[0]?.timestamp);
-  const last = Date.parse(messages.at(-1)?.timestamp);
-  return isNumber(first) && isNumber(last) ? { durationMs: last - first } : {};
+function duration({ firstMessage, lastMessage }) {
+  return isNumber(firstMessage) && isNumber(lastMessage) ? { durationMs: lastMessage - firstMessage } : {};
 }
 
-function tokens(session) {
-  const totalTokens = sumAssistants(session, (m) => m.usage?.totalTokens);
-  return totalTokens === undefined ? {} : { totalTokens };
+function tokens({ totalTokens }) {
+  return totalTokens.sum === undefined ? {} : { totalTokens: totalTokens.sum };
 }
 
 // Cost the harness logged (D5); no price table.
-function cost(session) {
-  const costUsd = sumAssistants(session, (m) => m.usage?.cost?.total);
-  return costUsd === undefined ? {} : { costUsd };
+function cost({ costUsd }) {
+  return costUsd.sum === undefined ? {} : { costUsd: costUsd.sum };
 }
 
 // Hit rate is over the session's token counts (D6); it needs all three counts to be logged
 // and a non-zero total.
-function cacheRate(session) {
-  const input = sumAssistants(session, (m) => m.usage?.input);
-  const cacheRead = sumAssistants(session, (m) => m.usage?.cacheRead);
-  const cacheWrite = sumAssistants(session, (m) => m.usage?.cacheWrite);
-  if (input === undefined || cacheRead === undefined || cacheWrite === undefined) return {};
-  const total = input + cacheRead + cacheWrite;
-  return total > 0 ? { cacheHitRate: cacheRead / total } : {};
+function cacheRate({ input, cacheRead, cacheWrite }) {
+  if (input.sum === undefined || cacheRead.sum === undefined || cacheWrite.sum === undefined) return {};
+  const total = input.sum + cacheRead.sum + cacheWrite.sum;
+  return total > 0 ? { cacheHitRate: cacheRead.sum / total } : {};
 }
 
 // A turn is a hit when its cacheRead is above 0 and a miss when it is 0 (D6); a turn that
 // logged no cacheRead is neither.
-function cacheTurns({ assistants }) {
-  const reads = assistants.map((m) => m.usage?.cacheRead).filter(isNumber);
-  if (!reads.length) return {};
-  const cacheHits = reads.filter((read) => read > 0).length;
-  return { cacheHits, cacheMisses: reads.length - cacheHits };
+function cacheTurns({ cacheReads, cacheHits }) {
+  return cacheReads > 0 ? { cacheHits, cacheMisses: cacheReads - cacheHits } : {};
 }
 
 // The key of `usage.cttl` names the cache lifetime class; its value is a token count
@@ -110,13 +135,11 @@ function cacheExpiry({ assistants }, now) {
 }
 
 // Compactions recorded in the session (docs/omp-session-format.md, D8 (a)): omp does not
-// mark automatic ones, so this counts all `compaction` entries. Counting from the text needs
-// the whole file; a tail window can hold only some of them, so the caller that reads a tail
-// counts the file another way and hands the number in as `sources.compactionCount`. With
-// neither, it reads n/a, never 0.
-function autocompactions({ fromStart, compactions, sources }) {
-  if (fromStart) return { autocompactions: compactions };
-  return isNumber(sources.compactionCount) ? { autocompactions: sources.compactionCount } : {};
+// mark automatic ones, so this counts all `compaction` entries. Counting needs the whole file:
+// the count of a state that holds only a tail window would be too low, so unless the state is
+// the whole file's it reads n/a, never 0 (D4).
+function autocompactions({ compactions }, whole) {
+  return whole ? { autocompactions: compactions } : {};
 }
 
 // Window of the latest assistant message's model, from omp's model catalogue (D8 (b)).
@@ -191,11 +214,11 @@ function context({ assistants, sources }) {
 
 // Burn rate is derived from the session's own duration, cost and token figures; a session
 // that has not lasted (duration 0) or lacks the input reads n/a.
-function burnRate(session) {
-  const { durationMs } = duration(session);
+function burnRate(state) {
+  const { durationMs } = duration(state);
   if (!(durationMs > 0)) return {};
-  const { costUsd } = cost(session);
-  const { totalTokens } = tokens(session);
+  const { costUsd } = cost(state);
+  const { totalTokens } = tokens(state);
   const figures = {};
   if (costUsd !== undefined) figures.burnCostPerHour = costUsd / (durationMs / 3600000);
   if (totalTokens !== undefined) figures.burnTokensPerMin = totalTokens / (durationMs / 60000);
@@ -222,39 +245,40 @@ function thinking({ thinkingLevel }) {
   return thinkingLevel ? { thinkingLevel } : {};
 }
 
-function premium(session) {
-  const premiumRequests = sumAssistants(session, (m) => m.usage?.premiumRequests);
-  return premiumRequests === undefined ? {} : { premiumRequests };
+function premium({ premiumRequests }) {
+  return premiumRequests.sum === undefined ? {} : { premiumRequests: premiumRequests.sum };
 }
 
-const FIGURES = [
-  model,
-  duration,
-  tokens,
-  cost,
-  cacheRate,
-  cacheTurns,
-  cacheExpiry,
-  autocompactions,
-  context,
-  burnRate,
-  sinceActivity,
-  latency,
-  thinking,
-  premium,
-];
+const TOTALS = [duration, tokens, cost, cacheRate, cacheTurns, burnRate, thinking, premium];
+const LATEST = [model, cacheExpiry, context, sinceActivity, latency];
 
-// `input` is the jsonl text, or `{ text, sources }` where `sources` holds what the caller
-// read besides the text, already read (the mod reads them asynchronously): `catalogue`, the
-// model entries (`{ id, contextWindow }`) of the session's provider from omp's newest
-// catalogue row; `compaction`, the `compaction` block of omp's config (`{}` when it has
-// none); and `compactionCount`, the number of `compaction` entries in the whole file when
-// the text is only its tail. A source that could not be read is null or absent.
+// `input` is the jsonl text, or `{ text, sources, state }`:
+//   - `text` is the file's text, or its tail window when the file is larger;
+//   - `state` is the accumulator of `fold` over the whole file, which the caller keeps for a
+//     file larger than the tail window; `null` when it could not be built, so the session
+//     totals read n/a. Without one, the text is folded, and counts as the whole file when it
+//     starts at the top of the file (it holds the `session` entry) or `sources.wholeFile` is
+//     true;
+//   - `sources` holds what the caller read besides the text, already read (the mod reads them
+//     asynchronously): `catalogue`, the model entries (`{ id, contextWindow }`) of the
+//     session's provider from omp's newest catalogue row; `compaction`, the `compaction`
+//     block of omp's config (`{}` when it has none); and `wholeFile`, true when the text is
+//     the whole file. A source that could not be read is null or absent.
 export const ompProvider = {
+  fold,
+
   readStats(input, now) {
-    const { text, sources } = typeof input === 'string' ? { text: input } : input;
-    const session = { ...parseSession(text), sources: sources ?? {} };
-    return Object.assign({}, ...FIGURES.map((figure) => figure(session, now)));
+    const { text, sources, state } = typeof input === 'string' ? { text: input } : input;
+    const entries = parseEntries(text);
+    const tail = { ...parseTail(entries), sources: sources ?? {} };
+    const total = state === undefined ? fold(undefined, entries) : state;
+    const whole = state !== undefined || total.fromStart || sources?.wholeFile === true;
+    return Object.assign(
+      {},
+      ...(total ? TOTALS.map((figure) => figure(total)) : []),
+      ...(total ? [autocompactions(total, whole)] : []),
+      ...LATEST.map((figure) => figure(tail, now)),
+    );
   },
 };
 
