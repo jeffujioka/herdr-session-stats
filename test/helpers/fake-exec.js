@@ -9,9 +9,8 @@
 // it served, so a test can say what a refresh read.
 //
 // `faults`: `before(call)` runs before a call is served (a test acts on the files there);
-// `fail(call)` returns true to make the call exit 1; `ddReport`: 'bsd' for BSD dd's wording,
-// 'none' for a dd that reports nothing, or a function of the block's length that returns the
-// statistics line (any wording).
+// `fail(call)` returns true to make the call exit 1; `ddReport`: 'none' for a dd that reports
+// nothing, or a function of the block's length that returns the statistics line (any wording).
 export const EXEC_CAP = 8 * 1024 * 1024;
 
 export function fakeExec(files, faults = {}) {
@@ -45,9 +44,7 @@ export function fakeExec(files, faults = {}) {
           ? ''
           : typeof faults.ddReport === 'function'
             ? `${part.length ? 1 : 0}+0 records in\n${part.length ? 1 : 0}+0 records out\n${faults.ddReport(part.length)}\n`
-            : faults.ddReport === 'bsd'
-              ? `${part.length ? 1 : 0}+0 records in\n${part.length ? 1 : 0}+0 records out\n${part.length} bytes transferred in 0.001 secs (${part.length * 1000} bytes/sec)\n`
-              : `${part.length ? 1 : 0}+0 records in\n${part.length ? 1 : 0}+0 records out\n${part.length} bytes (${part.length} B) copied, 0.001 s, 1.0 MB/s\n`;
+            : `${part.length ? 1 : 0}+0 records in\n${part.length ? 1 : 0}+0 records out\n${part.length} bytes (${part.length} B) copied, 0.001 s, 1.0 MB/s\n`;
     } else {
       throw new Error(`cannot start ${command}`);
     }

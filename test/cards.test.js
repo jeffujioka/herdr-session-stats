@@ -4,7 +4,7 @@ import { agentPanes, createCardBuilder } from '../src/cards.js';
 import { describeCard, formatDuration } from '../src/format.js';
 import { parseCompactionConfig, sessionDirSlug } from '../src/providers/omp-sources.js';
 import { parseSessionFiles } from '../src/providers/session-files.js';
-import { NA, readStats } from '../src/providers/index.js';
+import { NA, readStats, registerProvider } from '../src/providers/index.js';
 
 const FIXTURE = readFileSync(new URL('./fixtures/omp/basic.jsonl', import.meta.url), 'utf8');
 const HOME = '/Users/me';
@@ -126,6 +126,40 @@ describe('cards', () => {
     const [card] = await build([pane({ app: 'claude-code' })], NOW);
     expect(card).toMatchObject({ harness: 'claude-code', harnessName: 'Claude Code' });
     expect(card.stats).toEqual({ ...readStats('', null, NOW), harness: 'claude-code' });
+  });
+
+  test('a new provider needs no card change', async () => {
+    // a harness the cards know nothing of: one registry entry with its own hook, and the pane
+    // of its app gets a card, drawn like any other
+    const seen = [];
+    registerProvider('acme-agent', {
+      readStats: (input) => ({ model: input.model, totalTokens: input.tokens }),
+      createSessions: () => ({
+        async link(where) {
+          seen.push(where);
+          return { path: `${where.cwd}/acme.log`, mtimeMs: where.now - 1000, size: 5 };
+        },
+        async read(file, where) {
+          seen.push({ file, where });
+          return { model: 'acme-1', tokens: 1234 };
+        },
+      }),
+    });
+    const { build, calls } = builder(localWorld());
+    const [card] = await build([pane({ app: 'acme-agent' })], NOW);
+
+    expect(card).toMatchObject({ id: 'p1', folder: `${HOME}/work/app`, harness: 'acme-agent', harnessName: 'acme-agent' });
+    expect(card.stats).toMatchObject({ harness: 'acme-agent', model: 'acme-1', totalTokens: 1234, costUsd: NA });
+    // the hook was asked about the pane's folder on the pane's machine, and read the file it linked
+    expect(seen[0]).toMatchObject({ machine: null, cwd: `${HOME}/work/app`, home: HOME, os: 'Darwin', now: NOW });
+    expect(seen[1].file.path).toBe(`${HOME}/work/app/acme.log`);
+    // the card has the figures the provider gave; the rest read n/a
+    const rows = Object.fromEntries(describeCard(card).rows);
+    expect(rows.Model).toBe('acme-1');
+    expect(rows.Tokens).toBe('1k');
+    expect(rows.Cost).toBe(NA);
+    // no omp or Claude Code program was run for it
+    expect(calls.map((c) => c.command).filter((command) => command === 'find' || command === 'tail' || command === 'sqlite3')).toEqual([]);
   });
 
   test('the branch of the pane wins; git fills a missing one and the origin', async () => {

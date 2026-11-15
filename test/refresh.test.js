@@ -197,19 +197,14 @@ describe('refresh', () => {
     expect(readStats('omp', input, NOW).autocompactions).toBe(NA);
   });
 
-  test("a BSD dd's report is read the same", async () => {
-    const text = bigSession();
-    const { exec } = fakeExec(new Map([[PATH, text]]), { ddReport: 'bsd' });
-
-    expect(await counted(newReader(exec), file(text))).toBe(2);
-  });
-
   test("dd's report is read whatever its wording or the size of the block", async () => {
     const text = bigSession();
     const wordings = [
       (n) => `${n} Bytes (${n} B) copiert, 0,001 s, 1,0 MB/s`,
       (n) => `${n} octets (${n} o) copiés, 0,001 s, 1,0 Mo/s`,
       (n) => (n === 1 ? '1 byte copied, 0.001 s, 1.0 kB/s' : `${n} bytes copied, 0.001 s, 1.0 kB/s`),
+      // BSD (macOS) dd
+      (n) => `${n} bytes transferred in 0.001 secs (${n * 1000} bytes/sec)`,
     ];
     for (const ddReport of wordings) {
       const { exec } = fakeExec(new Map([[PATH, text]]), { ddReport });
