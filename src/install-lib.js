@@ -7,13 +7,15 @@
 //  - clones the developer's active layout as `<active>-stats` and adds the dock and the drawer
 //    to the clone; the active layout's own file is never written;
 //  - merges the presentations' keys into `keys.json`: every binding that is there stays, and a
-//    key that is taken is reported, never overwritten.
+//    key that is taken is reported, never overwritten (the one exception is this mod's own
+//    earlier drawer binding, which is upgraded to the drawer command).
 // Run again, it finds everything in place and writes nothing.
 //
 // The presentations are an additive list (`PRESENTATIONS`): each one is `{ id, key }`, and the
 // dock and the drawer also `{ blockId, addTo(layout) }`, the block they put into the clone and
-// that their key toggles. The overlay is a presentation without a block: its key is `mod.open`,
-// bound in `global`, and nothing is added to the clone for it.
+// that their key shows or hides (the dock by `layout.toggle`, the drawer by the mod's own
+// command). The overlay is a presentation without a block: its key is `mod.open`, bound in
+// `global`, and nothing is added to the clone for it.
 //
 // `fs`: { exists(path), readText(path), writeText(path, text) (makes the folders),
 //         listFiles(dir) (relative paths with '/', recursive, sorted), remove(path) }.
@@ -75,20 +77,36 @@ function addDrawer(layout) {
 export const OVERLAY_KEY = 'f9';
 
 // Each presentation is `{ id, key }`, and, when it is a block of a layout, `blockId` and
-// `addTo(layout)` as well (the dock and the drawer); one without a `blockId` is the overlay's kind.
+// `addTo(layout)` as well (the dock and the drawer); one without a `blockId` is the overlay's
+// kind. A block's key runs `layout.toggle` on its block, unless the presentation has its own
+// `action`; the drawer's is the mod's own command (D12: `layout.toggle` cannot find a floating
+// block), and `replaces` is the earlier action of this mod on that key, upgraded on install.
 export const PRESENTATIONS = [
   { id: 'dock', blockId: DOCK_BLOCK_ID, key: DOCK_KEY, addTo: addDock },
-  { id: 'drawer', blockId: DRAWER_BLOCK_ID, key: DRAWER_KEY, addTo: addDrawer },
+  {
+    id: 'drawer',
+    blockId: DRAWER_BLOCK_ID,
+    key: DRAWER_KEY,
+    addTo: addDrawer,
+    action: `${MOD_NAME}.drawer`,
+    replaces: `layout.toggle:${DRAWER_BLOCK_ID}`,
+  },
   { id: 'overlay', key: OVERLAY_KEY },
 ];
 
-// The keys of the presentations for the clone named `layoutName`. A block's key runs
-// `layout.toggle` on its block, in that layout's section only, so it does nothing in a layout
-// that has no such block. The overlay's key runs `mod.open` in `global`, for any layout.
+// The keys of the presentations for the clone named `layoutName`. A block's key is bound in
+// that layout's section only, so it does nothing in a layout that has no such block. The
+// overlay's key runs `mod.open` in `global`, for any layout.
 export function bindingsFor(layoutName) {
-  return PRESENTATIONS.map(({ id, blockId, key }) =>
+  return PRESENTATIONS.map(({ id, blockId, key, action, replaces }) =>
     blockId
-      ? { presentation: id, section: `layout:${layoutName}`, key, action: `layout.toggle:${blockId}` }
+      ? {
+          presentation: id,
+          section: `layout:${layoutName}`,
+          key,
+          action: action ?? `layout.toggle:${blockId}`,
+          ...(replaces === undefined ? {} : { replaces }),
+        }
       : { presentation: id, section: 'global', key, action: `mod.open:${MOD_NAME}` },
   );
 }
@@ -114,17 +132,23 @@ export function copyLayoutKeys(keys, from, to) {
 // a conflict; so is a key that a `global` binding finds in any `layout:` section, which wins
 // over `global` in its layout and would hide the binding there. A conflict is reported with
 // what holds the key and not bound. A binding that is already in place is neither added nor a
-// conflict, so a second run changes nothing. Keys are compared by their exact spelling:
-// `ctrl-shift-s` and `shift-ctrl-s` are not seen as the same key.
+// conflict, so a second run changes nothing. A binding with `replaces` takes over a key in its
+// own section that still holds that exact action (the mod's own earlier binding), reported as
+// added; any other action on the key is the developer's. Keys are compared by their exact
+// spelling: `ctrl-shift-s` and `shift-ctrl-s` are not seen as the same key.
 export function mergeKeys(keys, bindings) {
   const out = structuredClone(keys);
   const added = [];
   const conflicts = [];
   for (const binding of bindings) {
-    const { presentation, section, key, action } = binding;
+    const { presentation, section, key, action, replaces } = binding;
     if (out[section]?.[key] === action) continue;
+    // this mod's own earlier binding on the key is not in the way: it is the one being replaced
+    const upgrade = replaces !== undefined && out[section]?.[key] === replaces;
     const hiding = section === 'global' ? Object.keys(out).filter((s) => s.startsWith('layout:')) : [];
-    const holder = [section, 'global', 'terminal', ...hiding].find((s) => out[s]?.[key] !== undefined);
+    const holder = [section, 'global', 'terminal', ...hiding].find(
+      (s) => out[s]?.[key] !== undefined && !(upgrade && s === section),
+    );
     if (holder) {
       conflicts.push({ presentation, key, section: holder, taken: out[holder][key] });
     } else {

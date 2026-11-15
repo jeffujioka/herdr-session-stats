@@ -1,5 +1,5 @@
 import { describe, expect, test } from 'bun:test';
-import { adapt } from '../src/adapt.js';
+import { adapt, DRAWER_WIDTH_PX } from '../src/adapt.js';
 
 // herdr's placement() for a floating mod: where it sits; null for a mod in a layout block.
 const floating = (edge, extra = {}) => ({
@@ -32,9 +32,14 @@ describe('adapt the card list to its container', () => {
 
   test('drawer placement is a compact row', () => {
     // the drawer floats on a side edge: each card is a compact row, listed vertically, with its
-    // key figures on the edge side, so on the right edge the row is mirrored
-    expect(adapt({ placement: floating('right') })).toEqual({ direction: 'vertical', compact: true, mirror: true });
-    expect(adapt({ placement: floating('left') })).toEqual({ direction: 'vertical', compact: true, mirror: false });
+    // key figures on the edge side, so on the right edge the row is mirrored; the drawer has a
+    // fixed width, so a long folder path never makes it grow
+    expect(DRAWER_WIDTH_PX).toBe(360);
+    expect(adapt({ placement: floating('right') })).toEqual({ direction: 'vertical', compact: true, mirror: true, width: DRAWER_WIDTH_PX });
+    expect(adapt({ placement: floating('left') })).toEqual({ direction: 'vertical', compact: true, mirror: false, width: DRAWER_WIDTH_PX });
+    // the other containers have no fixed width
+    for (const placement of [null, floating('top')]) expect(adapt({ placement }).width).toBeUndefined();
+    expect(adapt({ overlay: 'o1' }).width).toBeUndefined();
     // the drawing never changes on hover: the app slides the drawer open, the mod draws one layout
     expect(adapt({ placement: floating('right', { hovered: true, dragging: true }) })).toEqual(adapt({ placement: floating('right') }));
   });
