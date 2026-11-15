@@ -43,6 +43,13 @@ export function agentPanes(panes) {
   return panes.filter((pane) => pane.terminal != null && pane.app);
 }
 
+// The panes of the shown space, in all of its tabs: `spaces` is herdr's `spaces()` (each with
+// its `tabs` and `active`), and a pane names its tab. The cards are those of this space only.
+export function panesOfActiveSpace(panes, spaces) {
+  const tabs = new Set(spaces.filter((space) => space.active).flatMap((space) => space.tabs.map((tab) => tab.id)));
+  return panes.filter((pane) => tabs.has(pane.tab));
+}
+
 const NO_GIT = { branch: null, origin: null };
 
 export function createCardBuilder({ exec, readTextFile, home }) {
