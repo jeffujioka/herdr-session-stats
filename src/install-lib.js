@@ -20,6 +20,8 @@
 // `fs`: { exists(path), readText(path), writeText(path, text) (makes the folders),
 //         listFiles(dir) (relative paths with '/', recursive, sorted), remove(path) }.
 
+import { DRAWER_COMMAND } from './adapt.js';
+
 export const MOD_NAME = 'herdr-session-stats';
 
 // The docked block: a right-hand column at the top level of the clone.
@@ -88,7 +90,7 @@ export const PRESENTATIONS = [
     blockId: DRAWER_BLOCK_ID,
     key: DRAWER_KEY,
     addTo: addDrawer,
-    action: `${MOD_NAME}.drawer`,
+    action: `${MOD_NAME}.${DRAWER_COMMAND}`,
     replaces: `layout.toggle:${DRAWER_BLOCK_ID}`,
   },
   { id: 'overlay', key: OVERLAY_KEY },
@@ -153,7 +155,7 @@ export function mergeKeys(keys, bindings) {
       conflicts.push({ presentation, key, section: holder, taken: out[holder][key] });
     } else {
       (out[section] ??= {})[key] = action;
-      added.push(binding);
+      added.push(upgrade ? { ...binding, replaced: replaces } : binding);
     }
   }
   return { keys: out, added, conflicts };

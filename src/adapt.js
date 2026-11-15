@@ -36,3 +36,21 @@ export function adapt({ placement = null, overlay = null } = {}) {
     ...(compact ? { width: DRAWER_WIDTH_PX } : {}),
   };
 }
+
+// The drawer's key is bound to the mod's own command, `<mod>.drawer` (herdr's `layout.toggle`
+// cannot find a floating block), which herdr delivers to `nextCommand()` of every shown copy.
+export const DRAWER_COMMAND = 'drawer';
+
+// Whether the drawer is shown after `command`: `floating` is whether this copy floats (it is
+// the drawer), `shown` whether it is shown now. Only the floating copy reacts to the command,
+// so the copies that hear it all flip nothing but the drawer, once.
+export function nextDrawerState(command, floating, shown) {
+  return command === DRAWER_COMMAND && floating ? !shown : shown;
+}
+
+// The drawer starts hidden and draws nothing (AGENTS.md: a floating block sizes to its content,
+// so rendering nothing hides it) until the command shows it. A copy that does not float is
+// never hidden.
+export function drawerHidden(floating, shown) {
+  return floating && !shown;
+}

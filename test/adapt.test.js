@@ -1,5 +1,5 @@
 import { describe, expect, test } from 'bun:test';
-import { adapt, DRAWER_WIDTH_PX } from '../src/adapt.js';
+import { adapt, DRAWER_COMMAND, DRAWER_WIDTH_PX, drawerHidden, nextDrawerState } from '../src/adapt.js';
 
 // herdr's placement() for a floating mod: where it sits; null for a mod in a layout block.
 const floating = (edge, extra = {}) => ({
@@ -42,6 +42,20 @@ describe('adapt the card list to its container', () => {
     expect(adapt({ overlay: 'o1' }).width).toBeUndefined();
     // the drawing never changes on hover: the app slides the drawer open, the mod draws one layout
     expect(adapt({ placement: floating('right', { hovered: true, dragging: true }) })).toEqual(adapt({ placement: floating('right') }));
+
+    // the drawer's key sends the command `drawer`, and only the copy that floats reacts, so
+    // several copies hearing it never flip it twice; it starts hidden and draws nothing then
+    expect(DRAWER_COMMAND).toBe('drawer');
+    expect(drawerHidden(true, false)).toBe(true);
+    expect(nextDrawerState(DRAWER_COMMAND, true, false)).toBe(true);
+    expect(drawerHidden(true, true)).toBe(false);
+    expect(nextDrawerState(DRAWER_COMMAND, true, true)).toBe(false);
+    // the dock and the overlay do not float: they ignore the command and are never hidden by it
+    expect(nextDrawerState(DRAWER_COMMAND, false, false)).toBe(false);
+    expect(drawerHidden(false, false)).toBe(false);
+    // another command changes nothing
+    expect(nextDrawerState('focus', true, true)).toBe(true);
+    expect(nextDrawerState('focus', true, false)).toBe(false);
   });
 
   test('a docked column and a top or bottom edge keep the full card', () => {
