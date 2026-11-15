@@ -74,9 +74,16 @@ async function select(run, database, query) {
   return Array.isArray(rows) ? rows : null;
 }
 
+// How old the last read of a session must be before a change of it is read again (a read at
+// most every 10 s while the database keeps changing), and how many sessions' reads are kept.
+const REREAD_MS = 10000;
+const MAX_CACHED = 8;
+
 // `execOn(machine)`: the app's `exec` bound to a machine (null: this computer), with its
 // timeout. `readTextOn` is not needed: everything is in the database.
 export function createOpencodeSessions({ execOn }) {
+  // session key -> { mtimeMs, at, input } of the last successful read, oldest first
+  const reads = new Map();
   return {
     // The session the pane's folder links to, as `{ path, mtimeMs, size }`: `path` is the
     // session id, which names it on its machine, and `size` is 0, the database being one file
@@ -92,17 +99,27 @@ export function createOpencodeSessions({ execOn }) {
 
     // The `input` of `readStats('opencode', input, now)` for a linked session. The messages
     // are needed (a failure rejects, so the card reads n/a); a database without the compaction
-    // record leaves `compactions` null, and that figure reads n/a alone.
-    async read(file, { machine, home }) {
+    // record leaves `compactions` null, and that figure reads n/a alone. The rows are read
+    // again only when the session changed since the last read (`file.mtimeMs`, which `link`
+    // got from the one-row change check) and that read is at least `REREAD_MS` old; otherwise
+    // the input of the last read is returned, so a refresh of a quiet database runs no rows query.
+    async read(file, { machine, home, now }) {
       const run = execOn(machine);
       const database = databaseOf(home);
+      const key = `${machine ?? ''}\0${database}\0${file.path}`;
+      const last = reads.get(key);
+      if (last && (last.mtimeMs === file.mtimeMs || now - last.at < REREAD_MS)) return last.input;
       const [messages, counted] = await Promise.all([
         select(run, database, messagesQuery(file.path)),
         select(run, database, compactionsQuery(file.path)).catch(() => null),
       ]);
       if (!messages) throw new Error('opencode messages unreadable');
       const compactions = Number.isFinite(counted?.[0]?.n) ? counted[0].n : null;
-      return { messages, compactions };
+      const input = { messages, compactions };
+      reads.delete(key);
+      reads.set(key, { mtimeMs: file.mtimeMs, at: now, input });
+      if (reads.size > MAX_CACHED) reads.delete(reads.keys().next().value);
+      return input;
     },
   };
 }
