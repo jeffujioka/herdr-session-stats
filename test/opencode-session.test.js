@@ -136,6 +136,56 @@ describe('opencode session', () => {
     expect(empty.totalTokens).toBe(NA);
     expect(empty.autocompactions).toBe(0);
   });
+
+  test('opencode is read only when its database changed', async () => {
+    const home = homeWith('basic');
+    const database = join(home, '.local/share/opencode/opencode.db');
+    const calls = [];
+    const hook = createSessions('opencode', { execOn: () => realExec(calls), readTextOn: () => async () => null });
+    // what a refresh does: the change check (link), then the read; returns what each ran
+    async function refresh(now) {
+      calls.length = 0;
+      const file = await hook.link({ machine: null, cwd: '/work/demo', home, os: 'Darwin', now });
+      const input = await hook.read(file, { machine: null, home, now });
+      const queries = calls.map((call) => call[call.length - 1]);
+      return {
+        input,
+        link: queries.filter((q) => q.includes('FROM session')).length,
+        rows: queries.filter((q) => q.includes('FROM message') || q.includes('FROM part')).length,
+      };
+    }
+    const touch = (at) => {
+      const run = Bun.spawnSync(['sqlite3', database, `UPDATE session SET time_updated = ${at} WHERE id = 'ses_basic'`]);
+      if (run.exitCode !== 0) throw new Error(run.stderr.toString());
+    };
+
+    // the first refresh reads the rows (messages and compactions), after the change check
+    const now = T0 + 530000;
+    const first = await refresh(now);
+    expect([first.link, first.rows]).toEqual([1, 2]);
+    expect(first.input.messages).toHaveLength(13);
+
+    // the database has not changed: only the change check runs, and the same input comes back
+    const unchanged = await refresh(now + 3000);
+    expect([unchanged.link, unchanged.rows]).toEqual([1, 0]);
+    expect(unchanged.input).toBe(first.input);
+
+    // it changed, but the last read is not 10 s old: still the cached input
+    touch(T0 + 531000);
+    const soon = await refresh(now + 9000);
+    expect([soon.link, soon.rows]).toEqual([1, 0]);
+    expect(soon.input).toBe(first.input);
+
+    // it changed and the last read is 10 s old: one re-read
+    const later = await refresh(now + 10000);
+    expect([later.link, later.rows]).toEqual([1, 2]);
+    expect(later.input).not.toBe(first.input);
+
+    // the re-read took in the change: unchanged again, nothing is read
+    const settled = await refresh(now + 25000);
+    expect([settled.link, settled.rows]).toEqual([1, 0]);
+    expect(settled.input).toBe(later.input);
+  });
 });
 
 describe('opencode session link', () => {
