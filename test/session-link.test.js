@@ -1,7 +1,5 @@
 import { describe, expect, test } from 'bun:test';
-import * as sessionLink from '../src/session-link.js';
-
-const { collapseBySession, linkSession } = sessionLink;
+import { collapseBySession, linkSession } from '../src/session-link.js';
 
 const NOW = Date.parse('2026-05-01T12:00:00Z');
 const MIN = 60_000;
@@ -15,8 +13,7 @@ describe('Pane to session link', () => {
   });
 
   test('an idle file is still linked', () => {
-    // however long ago it changed: there is no link window any more
-    expect(sessionLink.LINK_WINDOW_MS).toBeUndefined();
+    // however long ago it changed
     expect(linkSession([file('/s/old.jsonl', 20)])).toBe('/s/old.jsonl');
     expect(linkSession([file('/s/ancient.jsonl', 60 * 24 * 30), file('/s/old.jsonl', 20)])).toBe('/s/old.jsonl');
   });

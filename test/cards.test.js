@@ -152,7 +152,7 @@ describe('cards', () => {
       createSessions: () => ({
         async link(where) {
           seen.push(where);
-          return { path: `${where.cwd}/acme.log`, mtimeMs: where.now - 1000, size: 5 };
+          return { path: `${where.cwd}/acme.log`, mtimeMs: NOW - 1000, size: 5 };
         },
         async read(file, where) {
           seen.push({ file, where });
@@ -166,7 +166,9 @@ describe('cards', () => {
     expect(card).toMatchObject({ id: 'p1', folder: `${HOME}/work/app`, harness: 'acme-agent', harnessName: 'acme-agent' });
     expect(card.stats).toMatchObject({ harness: 'acme-agent', model: 'acme-1', totalTokens: 1234, costUsd: NA });
     // the hook was asked about the pane's folder on the pane's machine, and read the file it linked
-    expect(seen[0]).toMatchObject({ machine: null, cwd: `${HOME}/work/app`, home: HOME, os: 'Darwin', now: NOW });
+    expect(seen[0]).toMatchObject({ machine: null, cwd: `${HOME}/work/app`, home: HOME, os: 'Darwin' });
+    // no built-in hook reads the time, so the card does not hand it in
+    expect(seen[0]).not.toHaveProperty('now');
     expect(seen[1].file.path).toBe(`${HOME}/work/app/acme.log`);
     // the card has the figures the provider gave; the rest read n/a
     const rows = Object.fromEntries(describeCard(card).rows);

@@ -106,12 +106,12 @@ export function createCardBuilder({ exec, readTextFile, home }) {
 
   // The pane's linked session file and the machine's home, or null: no hook, no folder, a
   // machine that cannot be reached, or a folder with no session.
-  async function link(pane, now) {
+  async function link(pane) {
     try {
       const hook = sessionsOf(pane.app);
       if (!hook || !pane.cwd) return null;
       const { os, home: machineHome } = await placeOn(pane.machine);
-      const file = await hook.link({ machine: pane.machine, cwd: pane.cwd, home: machineHome, os, now });
+      const file = await hook.link({ machine: pane.machine, cwd: pane.cwd, home: machineHome, os });
       return file ? { file, home: machineHome } : null;
     } catch {
       return null;
@@ -120,7 +120,7 @@ export function createCardBuilder({ exec, readTextFile, home }) {
 
   // `reads`: session key -> stats, shared by the panes of one build that link to one session.
   async function resolve(pane, now, reads) {
-    const [git, linked] = await Promise.all([gitOf(pane, now), link(pane, now)]);
+    const [git, linked] = await Promise.all([gitOf(pane, now), link(pane)]);
     // the machine is part of the key: two machines can hold the same path
     const sessionPath = linked ? `${pane.machine ?? ''}\0${linked.file.path}` : null;
     let stats;

@@ -21,10 +21,9 @@
 // sources file and one registry line below. `execOn(machine)` and `readTextOn(machine)` are the
 // app's `exec` and `readTextFile` bound to a machine (null: this computer; `exec` also with a
 // timeout), read-only use only. `createSessions` runs once per card builder and returns
-//   link({ machine, cwd, home, os, now })  -> Promise<{ path, mtimeMs, size } | null>
+//   link({ machine, cwd, home, os })       -> Promise<{ path, mtimeMs, size } | null>
 //     the session file the pane's folder links to (the newest one, however long ago it
-//     changed, see session-link.js), or null; `home` and `os` (`uname -s`) are the machine's,
-//     `now` is epoch ms;
+//     changed, see session-link.js), or null; `home` and `os` (`uname -s`) are the machine's;
 //   read(file, { machine, home, now })     -> Promise<input>
 //     the `input` of this provider's `readStats` for a linked file.
 // Both may reject: the card then reads n/a. A provider without the hook yields no session.
